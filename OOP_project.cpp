@@ -10,26 +10,26 @@
 #include <commdlg.h>
 #include <algorithm>
 
-
-
 using namespace std;
 
 struct project {
     string name;
     string path;
     string lastP;
+    int canvasW;
+    int canvasH;
 
-    project(string n, string p , string date)
-        : name(n), path(p), lastP(date) {}
+    project(string n, string p , string date, int cw = 800, int ch = 600)
+        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch) {}
 };
 
 enum class app {
     STARTUP_MENU,
     NEW_PROJECT_DIALOG,
     CUSTOM_SIZE_DIALOG,
+    PROJECT_NAME_DIALOG,
     WORKSPACE
 };
-
 
 enum class canvasPreset {
     A4,
@@ -43,6 +43,7 @@ private:
     SDL_Rect box;
     string text;
     bool active ;
+    bool numericOnly ;
     SDL_Texture* txtTexture;
     TTF_Font* font;
     SDL_Renderer* renderer;
@@ -50,13 +51,13 @@ private:
     void updateTexture() {
         if (txtTexture)
             SDL_DestroyTexture( txtTexture);
-        
+
         if (!font)
             return;
-        
+
         SDL_Color textColor = {20, 20, 20, 255};
         SDL_Surface* surf = TTF_RenderText_Blended(font, text.empty() ? " ": text.c_str(), textColor);
-        
+
         if (surf) {
             txtTexture = SDL_CreateTextureFromSurface(renderer, surf);
             SDL_FreeSurface(surf);
@@ -67,8 +68,8 @@ private:
     }
 
 public:
-    txtIn( SDL_Renderer* rend, TTF_Font* f, int x, int y, int w, int h)
-        :font(f), renderer(rend), active(false), text(""), txtTexture(nullptr) {
+    txtIn( SDL_Renderer* rend, TTF_Font* f, int x, int y,int w, int h, bool numOnly= true)
+        :font(f), renderer(rend), active(false), numericOnly (numOnly), text(""), txtTexture(nullptr) {
         box = {x, y, w, h};
         updateTexture ();
     }
@@ -78,13 +79,18 @@ public:
             SDL_DestroyTexture (txtTexture);
     }
 
+    void setTxt(const string& t) {
+        text = t;
+        updateTexture();
+    }
+
     void setActive(bool a) {
         active = a;
         if (active) {
             SDL_StartTextInput();
         }
         else{
-            SDL_StopTextInput();
+            SDL_StopTextInput() ;
         }
     }
 
@@ -92,23 +98,40 @@ public:
         if ( !active)
             return;
 
-        if (e.type == SDL_TEXTINPUT) {
-            string input =e.text.text;
-            
-            for (char c : input) {
-                if (isdigit(c) && text.size () < 5) {
-                    text += c;
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym== SDLK_BACKSPACE && !text.empty()) {
+            text.pop_back();
+            updateTexture();
+        }
+
+        if(numericOnly) {
+            if (e.type == SDL_KEYDOWN) {
+                if ( e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9 ) {
+                    if (text.size() < 5) {
+                        text += (char)('0'+ (e.key.keysym.sym - SDLK_0));
+                        updateTexture();
+                    }
+                }
+                else if (e.key.keysym.sym >= SDLK_KP_0 && e.key.keysym.sym <= SDLK_KP_9) {
+                    if (text.size()< 5) {
+                        text += (char)('0' + (e.key.keysym.sym - SDLK_KP_0));
+                        updateTexture();
+                    }
                 }
             }
-            updateTexture() ;
         }
-        else if (e.type == SDL_KEYDOWN) {
-            if (e.key.keysym.sym== SDLK_BACKSPACE && !text.empty()) {
-                text. pop_back();
+        else {
+            if (e.type == SDL_TEXTINPUT) {
+                string input =e.text.text;
+                for (char c : input) {
+                    if (text.size () < 30) {
+                        text += c;
+                    }
+                }
                 updateTexture();
             }
         }
     }
+
 
     void draw (SDL_Renderer* rend) const {
         SDL_SetRenderDrawColor(rend, 255, 255, 255, 255);
@@ -130,7 +153,7 @@ public:
         }
     }
 
-    string gText() const { return text; }
+    string gTxt() const { return text; }
 
     bool isActive() const {return active; }
 
@@ -138,7 +161,7 @@ public:
         return (mx >= box.x && mx <= box.x + box.w &&
                 my >= box.y && my <= box.y + box.h );
     }
-    
+
 };
 
 
@@ -166,7 +189,7 @@ public:
         if (font) {
             SDL_Color textColor = {20, 20, 20, 255} ;
             SDL_Surface* textSurface = TTF_RenderText_Blended(font, text.c_str (), textColor);
-            
+
             if (textSurface) {
                 textTexture= SDL_CreateTextureFromSurface (renderer, textSurface);
                 textRect.w = textSurface->w;
@@ -224,7 +247,7 @@ public:
 
 class PROTEUS {
 private:
-    
+
     SDL_Window* window;
     SDL_Renderer*renderer;
     TTF_Font* font;
@@ -233,6 +256,7 @@ private:
 
     BUTTONS* btnNewP;
     BUTTONS* btnOpenP;
+    BUTTONS* btnRemRecents;
     vector<BUTTONS*> btnRecents;
     vector<project> recentPs;
 
@@ -246,8 +270,15 @@ private:
     BUTTONS* btnCustomOK;
     BUTTONS* btnCustomCancel;
 
+    txtIn* txtProjectName;
+    BUTTONS* btnNameOK;
+    BUTTONS* btnNameCancel;
+
+    BUTTONS* btnBack;
+
     int canvasWidth;
     int canvasHeight;
+    string penProjectName;
 
     void drawTxt(const string& str, int x, int y, SDL_Color color) const {
         if (!font)
@@ -290,6 +321,25 @@ private:
         return name;
     }
 
+    string diffName (const string& base) {
+        string candidate = base;
+        int counter= 1;
+        bool exists = true;
+        while (exists) {
+            exists = false;
+            for (const auto& p: recentPs) {
+                if (p.name == candidate) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) {
+                candidate =base + " " + to_string(counter);
+                counter++;
+            }
+        }
+        return candidate;
+    }
 
     void loadRecentPs() {
         ifstream file("recents.txt");
@@ -300,11 +350,13 @@ private:
                     continue;
                 stringstream ss(line);
                 string n, p, d;
+                int cw = 800, ch = 600;
                 getline( ss, n, '|');
                 getline(ss, p, '|');
                 getline(ss, d, '|');
+                if (ss >> cw >> ch) { }
                 if (!n.empty() && !p.empty() && !d.empty())
-                    recentPs.push_back(project(n, p, d));
+                    recentPs.push_back(project(n, p, d,cw, ch));
             }
             file.close();
         }
@@ -319,17 +371,16 @@ private:
 
     void saveRecentPs() {
         ofstream file("recents.txt");
-        if (!file.is_open())
+        if ( !file.is_open())
             return;
         for (const auto& p :recentPs) {
-            file << p.name << "|" << p.path << "|" << p.lastP << "\n";
+            file << p.name << "|" << p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH << "\n";
         }
         file.close();
     }
 
     void addToRecent(const project& prj) {
-        recentPs.erase(remove_if(recentPs.begin(), recentPs.end(),
-            [&] (const project& p) { return p.path == prj.path;}), recentPs.end());
+        recentPs.erase (remove_if(recentPs.begin(), recentPs.end() ,[&] (const project& p ) { return p.path == prj.path;}), recentPs.end());
 
         recentPs.insert(recentPs.begin(), prj);
 
@@ -346,10 +397,17 @@ private:
         int limit = min((int)recentPs.size(), 5);
         for (int i = 0; i < limit;i++) {
             string displayText = recentPs[i].name + "  (" + recentPs [i].lastP + ")";
-            btnRecents.push_back(new BUTTONS(
-                renderer, font, 450, 190 + (i * 65), 340, 50,{230, 230, 230, 255}, {200, 230, 255, 255},
+            btnRecents.push_back(new BUTTONS (renderer, font, 450, 190 +(i * 65), 340, 50,{230, 230, 230, 255}, {200, 230, 255, 255},
                 displayText));
         }
+    }
+
+    void clearRecents() {
+        recentPs.clear();
+        saveRecentPs ();
+        for (auto btn : btnRecents)
+            delete btn ;
+        btnRecents.clear();
     }
 
     string gDate() {
@@ -358,6 +416,17 @@ private:
         char buf[20];
         snprintf(buf, sizeof(buf), "%04d/%02d/%02d", 1900 + ltm->tm_year, 1 + ltm-> tm_mon, ltm->tm_mday);
         return string(buf);
+    }
+
+    void openNameDialog () {
+        if (!txtProjectName) {
+            txtProjectName = new txtIn(renderer,font, 275, 240, 300, 35, false);
+            btnNameOK =new BUTTONS(renderer, font, 275, 340, 120, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "OK");
+            btnNameCancel = new BUTTONS(renderer, font, 455, 340, 120,40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
+        }
+        txtProjectName-> setTxt(penProjectName);
+        txtProjectName->setActive(true);
+        currentState = app::PROJECT_NAME_DIALOG;
     }
 
 public:
@@ -374,11 +443,18 @@ public:
         btnCustomOK= nullptr;
         btnCustomCancel = nullptr;
         btnPresetCustom = nullptr;
+        txtProjectName =nullptr;
+        btnNameOK = nullptr;
+        btnNameCancel = nullptr;
+        btnBack = nullptr;
+        btnRemRecents = nullptr ;
+        penProjectName =  "Untitled";
     }
 
     ~PROTEUS() {
         delete btnNewP;
         delete btnOpenP;
+        delete btnRemRecents;
         delete btnPresetA4;
         delete btnPresetA3;
         delete btnCancelDialog;
@@ -387,6 +463,10 @@ public:
         delete txtHeight ;
         delete btnCustomOK;
         delete btnCustomCancel;
+        delete txtProjectName;
+        delete btnNameOK;
+        delete btnNameCancel;
+        delete btnBack;
         for (auto btn :btnRecents)
             delete btn;
 
@@ -429,10 +509,14 @@ public:
         btnNewP  = new BUTTONS(renderer, font, 60, 190, 300, 60, {100, 200,150, 255}, {120, 220, 170, 255}, "Create New Project") ;
         btnOpenP = new BUTTONS(renderer, font, 60, 280, 300,60,{144, 238, 144, 255}, {152, 251, 152, 255}, "Open Existing Project");
 
+        btnRemRecents = new BUTTONS (renderer, font, 60, 500, 200, 40, {255, 204, 153, 255}, {255, 178, 102, 255}, "Remove Recents");
+
         btnPresetA4 = new BUTTONS (renderer, font,213, 180, 180, 45, {200,155, 240, 255}, {180, 130, 225, 255}, "A4 (800x600)");
         btnPresetA3 =new BUTTONS(renderer, font, 456, 180,180, 45,{200, 155, 240, 255}, {180, 130, 225, 255},"A3 (1200x800)");
         btnPresetCustom = new BUTTONS (renderer, font, 325, 245, 200,45,{200, 155, 240, 255}, {180, 130,225, 255}, "Custom Size...");
         btnCancelDialog = new BUTTONS(renderer,font, 325, 390, 200, 45, {255, 255, 255, 255}, {240,240, 240, 255},"Cancel");
+
+        btnBack = new BUTTONS(renderer, font, 20, 20, 70, 25, {220, 220, 220, 255}, {180, 180, 180, 255}, "Back" );
 
         loadRecentPs();
 
@@ -450,6 +534,7 @@ public:
             if (currentState == app:: STARTUP_MENU) {
                 btnNewP->events(ev);
                 btnOpenP->events(ev);
+                btnRemRecents->events (ev);
                 for (auto btn: btnRecents) btn->events(ev);
 
                 if (btnNewP-> click(ev)) {
@@ -461,17 +546,21 @@ public:
                         canvasWidth  = 800;
                         canvasHeight = 600;
                         string projName = projNameFromPath (chosen);
-                        addToRecent(project(projName, chosen, gDate()));
+                        addToRecent(project (projName, chosen, gDate(), canvasWidth, canvasHeight));
                         currentState = app::WORKSPACE;
                         cout << "Opened project: " << chosen << endl ;
                     }
+                }
+                else if (btnRemRecents->click(ev)) {
+                    clearRecents();
+                    cout << "Recent projects cleared."<< endl;
                 }
                 else {
                     for (size_t i = 0; i < btnRecents.size(); i++) {
                         if (btnRecents [i]->click(ev)) {
                             cout << "Loading project: " << recentPs[i].name << endl;
-                            canvasWidth = 800;
-                            canvasHeight = 600;
+                            canvasWidth = recentPs[i].canvasW;
+                            canvasHeight = recentPs[i].canvasH;
                             currentState = app::WORKSPACE;
                         }
                     }
@@ -487,19 +576,21 @@ public:
                 if (btnPresetA4->click (ev)) {
                     canvasWidth = 800;
                     canvasHeight = 600;
-                    createNewP();
+                    penProjectName =diffName("Untitled");
+                    openNameDialog();
                 }
-                else if (btnPresetA3->click(ev)) {
+                else if (btnPresetA3-> click(ev)) {
                     canvasWidth = 1200;
                     canvasHeight = 800;
-                    createNewP();
+                    penProjectName = diffName("Untitled");
+                    openNameDialog();
                 }
                 else if (btnPresetCustom->click(ev)) {
                     if ( !txtWidth) {
-                        txtWidth = new txtIn(renderer, font, 285, 225, 100, 35);
-                        txtHeight = new txtIn(renderer,font, 465, 225, 100, 35);
+                        txtWidth = new txtIn(renderer, font, 285, 225, 100, 35, true);
+                        txtHeight = new txtIn(renderer,font, 465, 225, 100, 35, true);
                         btnCustomOK = new BUTTONS(renderer, font, 315, 390, 100, 40, {255,255, 255, 255}, {240, 240, 240, 255}, "OK");
-                        btnCustomCancel = new BUTTONS(renderer, font, 435, 390,100, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
+                        btnCustomCancel= new BUTTONS(renderer, font, 435, 390,100, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
                     }
                     txtWidth->setActive(true);
                     txtHeight->setActive(false);
@@ -510,7 +601,7 @@ public:
                 }
             }
             else if (currentState == app::CUSTOM_SIZE_DIALOG) {
-                if (txtWidth && txtWidth->isActive())
+                if (txtWidth && txtWidth->isActive ())
                     txtWidth-> handleEvent(ev);
                 if (txtHeight && txtHeight->isActive())
                     txtHeight->handleEvent(ev);
@@ -541,8 +632,8 @@ public:
                 }
 
                 if (btnCustomOK && btnCustomOK->click(ev)) {
-                    string wStr = txtWidth  ? txtWidth->gText() : "";
-                    string hStr = txtHeight ? txtHeight->gText(): "";
+                    string wStr= txtWidth  ? txtWidth->gTxt() : "";
+                    string hStr = txtHeight ? txtHeight->gTxt(): "";
                     if (!wStr.empty() && !hStr.empty()) {
                         canvasWidth = stoi (wStr);
                         canvasHeight = stoi(hStr);
@@ -552,29 +643,65 @@ public:
                         canvasHeight = 600;
                     }
                     if (txtWidth)
-                        txtWidth->setActive(false);
+                        txtWidth->setActive (false);
                     if (txtHeight)
                         txtHeight->setActive(false);
-                    createNewP();
+                    penProjectName = diffName("Untitled");
+                    openNameDialog();
                 }
                 else if ( btnCustomCancel && btnCustomCancel->click(ev)) {
                     if (txtWidth)
                         txtWidth->setActive (false);
                     if (txtHeight)
                         txtHeight->setActive(false);
-                    currentState =  app::NEW_PROJECT_DIALOG;
+                    currentState =  app ::NEW_PROJECT_DIALOG;
+                }
+            }
+            else if (currentState == app::PROJECT_NAME_DIALOG) {
+                SDL_StartTextInput();
+                if (txtProjectName && txtProjectName->isActive())
+                    txtProjectName->handleEvent(ev);
+                if (btnNameOK)
+                    btnNameOK->events (ev);
+                if (btnNameCancel)
+                    btnNameCancel->events(ev);
+
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button ==SDL_BUTTON_LEFT) {
+                    int mx = ev.button.x, my = ev.button.y;
+                    if (txtProjectName && txtProjectName->mouseIn(mx, my)) {
+                        txtProjectName->setActive (true);
+                    }
+                    else {
+                        if (txtProjectName)
+                            txtProjectName->setActive(false);
+                    }
+                }
+
+                if(btnNameOK && btnNameOK->click(ev)) {
+                    string name = txtProjectName ? txtProjectName->gTxt() : "";
+                    if (name.empty())
+                        name = "Untitled";
+                    string finalName = diffName(name);
+                    string path= "C:/projects/" + finalName + ".proj";
+                    addToRecent(project(finalName, path, gDate(), canvasWidth, canvasHeight));
+                    if (txtProjectName)
+                        txtProjectName->setActive(false);
+                    currentState = app::WORKSPACE;
+                    cout << "New project created: " << finalName <<" Canvas: " << canvasWidth << "x" << canvasHeight << endl;
+                }
+                else if (btnNameCancel && btnNameCancel->click(ev)) {
+                    if (txtProjectName)
+                        txtProjectName->setActive(false);
+                    currentState = app::STARTUP_MENU;
+                }
+            }
+            else if (currentState == app::WORKSPACE){
+                btnBack->events(ev);
+                if (btnBack->click(ev) ) {
+                    currentState = app::STARTUP_MENU;
                 }
             }
         }
-    }
-
-    void createNewP() {
-        string defaultName = "Untitled";
-        string defaultPath ="C:/projects/untitled.proj";
-        string date = gDate();
-        addToRecent(project(defaultName, defaultPath, date));
-        cout << "New project created. Canvas: "<< canvasWidth << "x" << canvasHeight << endl;
-        currentState = app:: WORKSPACE;
     }
 
     void render(){
@@ -586,11 +713,12 @@ public:
             drawTxt("Proteus", 60, 50, {0,0, 0, 255});
             drawTxt("Recent Projects:", 450, 155, {80, 80, 80, 255} );
 
-            btnNewP->draw(renderer);
+            btnNewP->draw(renderer) ;
             btnOpenP->draw (renderer);
+            btnRemRecents->draw(renderer);
 
             if (btnRecents.empty()) {
-                drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255});
+                drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 });
             }
             else {
                 for (auto btn : btnRecents) {
@@ -638,10 +766,32 @@ public:
             if (btnCustomCancel)
                 btnCustomCancel->draw(renderer);
         }
+        else if (currentState == app::PROJECT_NAME_DIALOG) {
+            SDL_Rect dlg = {200, 150, 450, 300};
+            SDL_SetRenderDrawColor (renderer, 210, 210, 230, 255);
+            SDL_RenderFillRect(renderer, &dlg);
+            SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+            SDL_RenderDrawRect(renderer, &dlg);
+
+            int titleW, titleH;
+            if (font)
+                TTF_SizeText(font, "Enter project name:", &titleW, &titleH);
+            else titleW = 200;
+            int titleX = dlg.x +(dlg.w - titleW) / 2;
+            drawTxt("Enter project name:", titleX, 180, {20, 20, 20, 255});
+
+            if (txtProjectName)
+                txtProjectName->draw(renderer);
+            if (btnNameOK)
+                btnNameOK->draw(renderer);
+            if (btnNameCancel)
+                btnNameCancel->draw(renderer);
+        }
         else if (currentState ==app::WORKSPACE){
             SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255);
             SDL_RenderClear (renderer);
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), 50, 50, {0, 0, 0, 255});
+            btnBack->draw(renderer);
         }
 
         SDL_RenderPresent(renderer);
