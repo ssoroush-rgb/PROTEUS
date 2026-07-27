@@ -10,8 +10,6 @@
 #include <commdlg.h>
 #include <algorithm>
 
-
-
 using namespace std;
 
 struct project {
@@ -293,10 +291,12 @@ private:
     int winW, winH;
     int mseX, mseY;
 
+    SDL_Rect zoomRct ;
+
     int wldToScrX(int wx) const { return (int)(wx * zmLvl + panX);}
-    int wldToScrY(int wy) const { return (int)(wy * zmLvl + panY);}
+    int wldToScrY(int wy) const { return (int)(panY + (canvasHeight - wy) * zmLvl);}
     int scrToWldX(int sx) const { return(int)((sx - panX) / zmLvl); }
-    int scrToWldY(int sy) const { return (int)((sy - panY) / zmLvl) ; }
+    int scrToWldY (int sy) const { return canvasHeight - (int)((sy - panY) / zmLvl) ;}
 
     int snapToGrid (int val) const {return ((val + grdSz/2) / grdSz) * grdSz;}
 
@@ -311,23 +311,34 @@ private:
             int sx = wldToScrX(x);
             SDL_RenderDrawLine(renderer, sx, 0, sx, vpH);
         }
-        for (int y = startY; y <= wB ; y += grdSz){
+        for (int y = startY; y >= wB ;y -= grdSz){
             int sy = wldToScrY(y) ;
             SDL_RenderDrawLine(renderer, 0, sy, vpW, sy);
         }
+
         int ox = wldToScrX(0), oy = wldToScrY(0);
-        SDL_SetRenderDrawColor(renderer, 150,150,150,255);
-        SDL_RenderDrawLine(renderer, ox-10, oy, ox+10, oy);
-        SDL_RenderDrawLine (renderer, ox, oy-10, ox, oy+10);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_Rect hBar = {ox - 6, oy - 1, 13, 3};
+        SDL_Rect vBar= {ox - 1, oy - 6, 3, 13};
+        SDL_RenderFillRect(renderer, &hBar);
+        SDL_RenderFillRect(renderer, &vBar);
     }
 
     void drawStatusBar() {
         SDL_Rect bar ={0, winH - statH, winW, statH};
         SDL_SetRenderDrawColor(renderer, 60, 60,60,255);
         SDL_RenderFillRect(renderer, &bar);
-        int wx = scrToWldX(mseX) , wy= scrToWldY(mseY);
-        string txt = "X: " + to_string(wx)+ "  Y: " + to_string(wy) + "  Zoom: " + to_string((int)(zmLvl*100)) + "%";
+        int wx = scrToWldX (mseX) , wy= scrToWldY(mseY);
+        string txt = "X: " + to_string(wx)+ "  Y: " + to_string(wy);
         drawTxt(txt, 10, winH - statH + 5, {220,220,220,255});
+
+        string zoomTxt = to_string((int)(zmLvl*100)) + "%" ;
+        int tw, th ;
+        TTF_SizeText(font, zoomTxt.c_str(), &tw, &th) ;
+        int zx = winW - tw - 10 ;
+        int zy = winH - statH + 5 ;
+        zoomRct = {zx - 5, zy - 2, tw + 10, th + 4} ;
+        drawTxt(zoomTxt, zx, zy, {220,220,220,255}) ;
     }
 
     void drawTxt(const string& str, int x, int y, SDL_Color color) const {
@@ -506,6 +517,7 @@ public:
         statH = 30 ;
         winW = 850;winH = 600;
         mseX = 0 ; mseY = 0;
+        zoomRct = {0,0,0,0} ;
     }
 
     ~PROTEUS() {
@@ -762,6 +774,27 @@ public:
                     currentState = app::STARTUP_MENU;
                 }
 
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+                    if (mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
+                        mseY >= zoomRct.y && mseY <= zoomRct.y + zoomRct.h) {
+                        zmLvl = 1.0f ;
+                        panX = 0 ; panY = 0 ;
+                    } else {
+                        if (!btnBack->click(ev)) {
+                            isPan = true ;
+                            panStartX = ev.button.x; panStartY = ev.button.y;
+                            panOffXst = panX; panOffYst = panY;
+                        }
+                    }
+                }
+                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
+                    isPan = false;
+                }
+                if (isPan && ev.type == SDL_MOUSEMOTION) {
+                    panX = panOffXst + (ev.motion.x - panStartX);
+                    panY = panOffYst + (ev.motion.y - panStartY);
+                }
+
                 if (ev.type == SDL_MOUSEWHEEL){
                     int mx, my;
                     SDL_GetMouseState (&mx, &my);
@@ -772,19 +805,6 @@ public:
                     if (zmLvl > 5.0f) zmLvl = 5.0f;
                     panX = mx - (int)((mx - panX) *(zmLvl / oldZm));
                     panY = my - (int)((my - panY) * (zmLvl / oldZm));
-                }
-
-                if ( ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_MIDDLE){
-                    isPan = true ;
-                    panStartX = ev.button.x; panStartY = ev.button.y;
-                    panOffXst = panX; panOffYst = panY;
-                }
-                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_MIDDLE) {
-                    isPan = false;
-                }
-                if (isPan && ev.type == SDL_MOUSEMOTION) {
-                    panX= panOffXst + (ev.motion.x - panStartX);
-                    panY= panOffYst + (ev.motion.y - panStartY);
                 }
 
                 if (ev.type == SDL_KEYDOWN) {
