@@ -10,6 +10,8 @@
 #include <commdlg.h>
 #include <algorithm>
 
+
+
 using namespace std;
 
 struct project {
@@ -280,6 +282,54 @@ private:
     int canvasHeight;
     string penProjectName;
 
+
+    int grdSz;
+    float zmLvl;
+    int panX, panY ;
+    bool isPan;
+    int panStartX, panStartY;
+    int panOffXst, panOffYst;
+    int statH ;
+    int winW, winH;
+    int mseX, mseY;
+
+    int wldToScrX(int wx) const { return (int)(wx * zmLvl + panX);}
+    int wldToScrY(int wy) const { return (int)(wy * zmLvl + panY);}
+    int scrToWldX(int sx) const { return(int)((sx - panX) / zmLvl); }
+    int scrToWldY(int sy) const { return (int)((sy - panY) / zmLvl) ; }
+
+    int snapToGrid (int val) const {return ((val + grdSz/2) / grdSz) * grdSz;}
+
+    void drawGrid() {
+        int vpW = winW , vpH = winH - statH;
+        int wL = scrToWldX(0), wT = scrToWldY(0);
+        int wR= scrToWldX(vpW), wB = scrToWldY(vpH);
+        int startX = (wL / grdSz) * grdSz ;
+        int startY = (wT / grdSz) * grdSz;
+        SDL_SetRenderDrawColor(renderer, 200,200,200, 80);
+        for (int x = startX; x <= wR ; x += grdSz) {
+            int sx = wldToScrX(x);
+            SDL_RenderDrawLine(renderer, sx, 0, sx, vpH);
+        }
+        for (int y = startY; y <= wB ; y += grdSz){
+            int sy = wldToScrY(y) ;
+            SDL_RenderDrawLine(renderer, 0, sy, vpW, sy);
+        }
+        int ox = wldToScrX(0), oy = wldToScrY(0);
+        SDL_SetRenderDrawColor(renderer, 150,150,150,255);
+        SDL_RenderDrawLine(renderer, ox-10, oy, ox+10, oy);
+        SDL_RenderDrawLine (renderer, ox, oy-10, ox, oy+10);
+    }
+
+    void drawStatusBar() {
+        SDL_Rect bar ={0, winH - statH, winW, statH};
+        SDL_SetRenderDrawColor(renderer, 60, 60,60,255);
+        SDL_RenderFillRect(renderer, &bar);
+        int wx = scrToWldX(mseX) , wy= scrToWldY(mseY);
+        string txt = "X: " + to_string(wx)+ "  Y: " + to_string(wy) + "  Zoom: " + to_string((int)(zmLvl*100)) + "%";
+        drawTxt(txt, 10, winH - statH + 5, {220,220,220,255});
+    }
+
     void drawTxt(const string& str, int x, int y, SDL_Color color) const {
         if (!font)
             return;
@@ -314,7 +364,7 @@ private:
 
     string projNameFromPath( const string& path ) {
         size_t pos = path.find_last_of( "\\/" );
-        string name = ( pos != string::npos ) ? path.substr( pos + 1 ) : path;
+        string name = (pos != string::npos ) ? path.substr( pos + 1 ) : path;
         pos = name.find_last_of('.');
         if (pos !=string::npos)
             name = name.substr( 0,pos );
@@ -374,7 +424,7 @@ private:
         if ( !file.is_open())
             return;
         for (const auto& p :recentPs) {
-            file << p.name << "|" << p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH << "\n";
+            file << p.name << "|" <<p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH << "\n";
         }
         file.close();
     }
@@ -449,6 +499,13 @@ public:
         btnBack = nullptr;
         btnRemRecents = nullptr ;
         penProjectName =  "Untitled";
+        grdSz = 20;
+        zmLvl =1.0f;
+        panX = 0; panY = 0;
+        isPan = false;
+        statH = 30 ;
+        winW = 850;winH = 600;
+        mseX = 0 ; mseY = 0;
     }
 
     ~PROTEUS() {
@@ -529,6 +586,10 @@ public:
         while (SDL_PollEvent(&ev) !=0) {
             if (ev.type == SDL_QUIT) {
                 running = false;
+            }
+
+            if (ev.type == SDL_MOUSEMOTION){
+                SDL_GetMouseState(&mseX , &mseY);
             }
 
             if (currentState == app:: STARTUP_MENU) {
@@ -700,6 +761,56 @@ public:
                 if (btnBack->click(ev) ) {
                     currentState = app::STARTUP_MENU;
                 }
+
+                if (ev.type == SDL_MOUSEWHEEL){
+                    int mx, my;
+                    SDL_GetMouseState (&mx, &my);
+                    float oldZm =zmLvl;
+                    if (ev.wheel.y >0) zmLvl *= 1.1f;
+                    else if (ev.wheel.y < 0) zmLvl /= 1.1f ;
+                    if (zmLvl < 0.2f) zmLvl = 0.2f;
+                    if (zmLvl > 5.0f) zmLvl = 5.0f;
+                    panX = mx - (int)((mx - panX) *(zmLvl / oldZm));
+                    panY = my - (int)((my - panY) * (zmLvl / oldZm));
+                }
+
+                if ( ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_MIDDLE){
+                    isPan = true ;
+                    panStartX = ev.button.x; panStartY = ev.button.y;
+                    panOffXst = panX; panOffYst = panY;
+                }
+                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_MIDDLE) {
+                    isPan = false;
+                }
+                if (isPan && ev.type == SDL_MOUSEMOTION) {
+                    panX= panOffXst + (ev.motion.x - panStartX);
+                    panY= panOffYst + (ev.motion.y - panStartY);
+                }
+
+                if (ev.type == SDL_KEYDOWN) {
+                    if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
+                        float oldZm = zmLvl;
+                        zmLvl *= 1.1f;
+                        if (zmLvl > 5.0f)
+                            zmLvl =5.0f ;
+                        int cx = winW/2 ,cy = (winH - statH)/2;
+                        panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
+                        panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
+                    }
+                    else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS) {
+                        float oldZm = zmLvl;
+                        zmLvl/= 1.1f;
+                        if (zmLvl < 0.2f)
+                            zmLvl = 0.2f;
+                        int cx = winW/2 , cy = (winH - statH)/2;
+                        panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
+                        panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
+                    }
+                    else if (ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL) {
+                        zmLvl = 1.0f;
+                        panX = 0 ; panY =0;
+                    }
+                }
             }
         }
     }
@@ -790,8 +901,10 @@ public:
         else if (currentState ==app::WORKSPACE){
             SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255);
             SDL_RenderClear (renderer);
+            drawGrid();
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), 50, 50, {0, 0, 0, 255});
             btnBack->draw(renderer);
+            drawStatusBar() ;
         }
 
         SDL_RenderPresent(renderer);
