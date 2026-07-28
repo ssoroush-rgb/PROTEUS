@@ -37,6 +37,12 @@ enum class canvasPreset {
     CUSTOM
 };
 
+enum class Tool {
+    SELECT,
+    WIRE ,
+    COMPONENT
+};
+
 class txtIn {
 
 private:
@@ -291,7 +297,9 @@ private:
     int winW, winH;
     int mseX, mseY;
 
-    SDL_Rect zoomRct ;
+    SDL_Rect zoomRct;
+
+    Tool currentTool;
 
     int wldToScrX(int wx) const { return (int)(wx * zmLvl + panX);}
     int wldToScrY(int wy) const { return (int)(panY + (canvasHeight - wy) * zmLvl);}
@@ -518,6 +526,7 @@ public:
         winW = 850;winH = 600;
         mseX = 0 ; mseY = 0;
         zoomRct = {0,0,0,0} ;
+        currentTool = Tool ::SELECT ;
     }
 
     ~PROTEUS() {
@@ -829,6 +838,39 @@ public:
                     else if (ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL) {
                         zmLvl = 1.0f;
                         panX = 0 ; panY =0;
+                    }
+                    else if (ev.key.keysym.sym == SDLK_1){
+                        currentTool = Tool::SELECT;
+                        cout << "Select tool (keyboard)\n";
+                    }
+                    else if (ev.key.keysym.sym == SDLK_2) {
+                        currentTool = Tool::WIRE;
+                        cout <<  "Wire tool (keyboard)\n";
+                    }
+                    else if (ev.key.keysym.sym == SDLK_3) {
+                        currentTool = Tool::COMPONENT;
+                        cout << "Component tool (keyboard)\n";
+                    }
+                    else if (ev.key.keysym.sym == SDLK_DELETE) {
+                        cout << "Delete selected item (placeholder) \n";
+                    }
+                    else if (ev.key.keysym.sym ==SDLK_s && SDL_GetModState() & KMOD_CTRL) {
+                        cout << "Ctrl+S: Save (placeholder)\n";
+                    }
+                    else if (ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL) {
+                        string chosen = fileDialog();
+                        if (!chosen.empty()){
+                            canvasWidth  = 800 ; canvasHeight = 600;
+                            string projName = projNameFromPath (chosen);
+                            addToRecent(project (projName, chosen, gDate(), canvasWidth, canvasHeight));
+                            cout << "Loaded: "<< chosen << endl;
+                        }
+                    }
+                    else if (ev.key.keysym.sym == SDLK_z && SDL_GetModState() & KMOD_CTRL) {
+                        cout << "Undo (placeholder)\n";
+                    }
+                    else if(ev.key.keysym.sym== SDLK_y && SDL_GetModState() & KMOD_CTRL) {
+                        cout << "Redo (placeholder) \n";
                     }
                 }
             }
