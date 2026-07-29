@@ -10,6 +10,8 @@
 #include <commdlg.h>
 #include <algorithm>
 
+
+
 using namespace std;
 
 struct project {
@@ -18,9 +20,10 @@ struct project {
     string lastP;
     int canvasW;
     int canvasH;
+    vector<string> activeComponents;                                
 
-    project(string n, string p , string date, int cw = 800, int ch = 600)
-        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch) {}
+    project(string n, string p , string date, int cw = 800, int ch = 600, vector<string> ac = {})
+        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch), activeComponents (ac) {}       
 };
 
 enum class app {
@@ -37,7 +40,7 @@ enum class canvasPreset {
     CUSTOM
 };
 
-enum class Tool {          
+enum class Tool {
     SELECT,
     WIRE ,
     COMPONENT
@@ -49,7 +52,7 @@ private:
     SDL_Rect box;
     string text;
     bool active ;
-    bool numericOnly;      
+    bool numericOnly;
     SDL_Texture* txtTexture;
     TTF_Font* font;
     SDL_Renderer* renderer;
@@ -74,7 +77,7 @@ private:
     }
 
 public:
-    txtIn( SDL_Renderer* rend, TTF_Font* f, int x, int y,int w, int h, bool numOnly= true)   
+    txtIn( SDL_Renderer* rend, TTF_Font* f, int x, int y,int w, int h, bool numOnly= true)
         :font(f), renderer(rend), active(false), numericOnly (numOnly), text(""), txtTexture(nullptr) {
         box = {x, y, w, h};
         updateTexture ();
@@ -85,7 +88,7 @@ public:
             SDL_DestroyTexture (txtTexture);
     }
 
-    void setTxt(const string& t) {    
+    void setTxt(const string& t) {
         text = t;
         updateTexture();
     }
@@ -109,7 +112,7 @@ public:
             updateTexture();
         }
 
-        if(numericOnly) {                                         
+        if(numericOnly) {
             if (e.type == SDL_KEYDOWN) {
                 if ( e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9 ){
                     if (text.size() < 5) {
@@ -153,13 +156,13 @@ public:
             textRect.w = min(box.w - 10, 200);
             textRect.h = box.h -6;
             textRect.x = box.x + 5;
-            textRect.y = box.y + (box.h - textRect.h) / 2; 
+            textRect.y = box.y + (box.h - textRect.h) / 2;
             SDL_QueryTexture(txtTexture, nullptr, nullptr,&textRect.w, &textRect.h);
             SDL_RenderCopy(rend, txtTexture, nullptr, &textRect);
         }
     }
 
-    string gTxt() const { return text; }        
+    string gTxt() const { return text; }
 
     bool isActive() const {return active; }
 
@@ -236,7 +239,8 @@ public:
     void draw (SDL_Renderer* renderer) const {
         if (hover) {
             SDL_SetRenderDrawColor(renderer,hoverColor.r, hoverColor.g, hoverColor.b, hoverColor.a);
-        } else {
+        }
+        else {
             SDL_SetRenderDrawColor(renderer,normalColor.r, normalColor.g, normalColor.b, normalColor.a);
         }
         SDL_RenderFillRect(renderer, &rect);
@@ -257,14 +261,14 @@ private:
     SDL_Window* window;
     SDL_Renderer*renderer;
     TTF_Font* font;
-    TTF_Font* titleFont ;         
-    TTF_Font* libFont;              
+    TTF_Font* titleFont ;
+    TTF_Font* libFont;
     bool running ;
     app currentState;
 
     BUTTONS* btnNewP;
     BUTTONS* btnOpenP;
-    BUTTONS* btnRemRecents;          
+    BUTTONS* btnRemRecents;
     vector<BUTTONS*> btnRecents;
     vector<project> recentPs;
 
@@ -278,40 +282,40 @@ private:
     BUTTONS* btnCustomOK;
     BUTTONS* btnCustomCancel;
 
-    txtIn* txtProjectName;            
-    BUTTONS* btnNameOK;                
-    BUTTONS*  btnNameCancel;        
+    txtIn* txtProjectName;
+    BUTTONS* btnNameOK;
+    BUTTONS*  btnNameCancel;
 
-    BUTTONS* btnBack;                   
+    BUTTONS* btnBack;
 
     int canvasWidth;
     int canvasHeight;
-    string penProjectName;             
+    string penProjectName;
 
 
-    int grdSz;                         
-    float zmLvl;                        
-    int panX , panY;                 
-    bool isPan;                       
-    int panStartX, panStartY;         
-    int panOffXst, panOffYst;         
-    int statH ;                      
-    int winW, winH;                 
-    int mseX, mseY;                  
+    int grdSz;
+    float zmLvl;
+    int panX , panY;
+    bool isPan;
+    int panStartX, panStartY;
+    int panOffXst, panOffYst;
+    int statH ;
+    int winW, winH;
+    int mseX, mseY;
 
-    SDL_Rect zoomRct ;                 
+    SDL_Rect zoomRct ;
 
-    bool showGrid;                    
-    Tool currentTool;               
+    bool showGrid;
+    Tool currentTool;
 
-    int tlbrH ;                     
-    int pnlLW , pnlRW;              
-    int vpX, vpY, vpW , vpH;         
+    int tlbrH ;
+    int pnlLW , pnlRW;
+    int vpX, vpY, vpW , vpH;
 
-    vector<BUTTONS*> tlbrBtns;       
-    vector<string> libItms;         
-    vector <SDL_Rect> libRcts;         
-    string selLibItm;                 
+    vector<BUTTONS*> tlbrBtns;
+    vector<string> libItms;
+    vector <SDL_Rect> libRcts;
+    string selLibItm;
 
     struct tree {
         string name;
@@ -319,29 +323,37 @@ private:
         bool expanded;
         tree(string n, vector<string> comps) : name(n), components(comps), expanded(false) {}
     };
-    vector<tree> libCategories;    
-    txtIn* searchBox;                  
-    string searchFilter;              
-    vector<string> activeComps;      
-    SDL_Rect previewRect ;           
-    bool showLib;                   
-    int activeCompsY;                 
+    vector<tree> libCategories;
+    txtIn* searchBox;
+    string searchFilter;
+    vector<string> activeComps;
+    SDL_Rect previewRect ;
+    bool showLib;
+    int activeCompsY;
+    string currentProjectPath;                                         
 
-    int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}    
+    struct placedComp {
+        string name;
+        int x, y;
+    };
+    vector<placedComp> placedComponents;                          
+
+    int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}
     int wldToScrY(int wy) const { return vpY + (int)(panY + (canvasHeight - wy) * zmLvl);}
-    int scrToWldX(int sx) const { return (int)((sx - vpX - panX) / zmLvl); } 
-    int scrToWldY (int sy) const { return canvasHeight - (int)((sy - vpY - panY) / zmLvl) ;} 
+    int scrToWldX(int sx) const { return (int)((sx - vpX - panX) / zmLvl); }
+    int scrToWldY (int sy) const { return canvasHeight - (int)((sy - vpY - panY) / zmLvl) ;}
 
-    int snapToGrid (int val) const {return ((val + grdSz /2) / grdSz) * grdSz;}  
+    int snapToGrid (int val) const {return ((val + grdSz /2) / grdSz) * grdSz;}
 
-    void resetView() {                
+    void resetView() {
         zmLvl =1.0f;
         panX = 1;
         panY = (winH -tlbrH - statH) - canvasHeight - 1;
     }
 
-    void drawGrid() {                  
-        if (!showGrid) return ;
+    void drawGrid() {
+        if (!showGrid)
+            return ;
         int wL = scrToWldX(vpX), wT = scrToWldY (vpY);
         int wR= scrToWldX(vpX+vpW), wB = scrToWldY(vpY+vpH);
         int startX = (wL / grdSz) * grdSz ;
@@ -368,7 +380,7 @@ private:
         }
     }
 
-    void drawStatusBar() {             
+    void drawStatusBar() {
         SDL_Rect bar ={0, winH - statH,winW, statH};
         SDL_SetRenderDrawColor(renderer, 60, 60,60,255);
         SDL_RenderFillRect(renderer, &bar);
@@ -403,7 +415,7 @@ private:
         }
     }
 
-    void drawTxt(const string& str, int x, int y, SDL_Color color, TTF_Font* fnt) const { 
+    void drawTxt(const string& str, int x, int y, SDL_Color color, TTF_Font* fnt) const {
         if (!fnt)
             return;
         SDL_Surface* surf = TTF_RenderText_Blended (fnt, str.c_str(), color);
@@ -432,35 +444,41 @@ private:
                 SDL_RenderDrawLine(renderer, x, y, x+10, y+10);
                 x+=10; y+=10;
             }
-        } else if (compName == "Capacitor") {
+        }
+        else if (compName == "Capacitor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            SDL_RenderDrawLine(renderer, cx-10, cy-15, cx-10, cy+15);
+            SDL_RenderDrawLine(renderer, cx-10, cy-15, cx -10, cy+15);
             SDL_RenderDrawLine(renderer, cx+10, cy-15, cx+10, cy+15);
-        } else if (compName == "LED") {
+        }
+        else if (compName == "LED") {
             SDL_SetRenderDrawColor(renderer, 200,0,0,255);
             SDL_RenderDrawLine(renderer, cx-10, cy-10, cx, cy);
-            SDL_RenderDrawLine(renderer, cx-10, cy+10, cx, cy);
+            SDL_RenderDrawLine(renderer, cx-10, cy+10 , cx, cy);
             SDL_RenderDrawLine(renderer, cx, cy-10, cx+10, cy);
             SDL_RenderDrawLine(renderer, cx, cy, cx+10, cy-10);
-            SDL_RenderDrawLine(renderer, cx, cy, cx+10, cy+10);
-        } else if (compName == "Transistor" || compName == "NPN" || compName == "PNP") {
+            SDL_RenderDrawLine (renderer, cx, cy, cx+10, cy+10);
+        }
+        else if (compName == "Transistor" || compName == "NPN" || compName == "PNP") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             SDL_RenderDrawLine(renderer, cx, cy-10, cx, cy+10);
             SDL_RenderDrawLine(renderer, cx-8, cy-4, cx+8, cy-8);
             SDL_RenderDrawLine(renderer, cx-8, cy+4, cx+8, cy+8);
             SDL_Rect circle = {cx-12, cy-12, 24,24};
             SDL_RenderDrawRect(renderer, &circle);
-        } else if (compName == "Ground") {
+        }
+        else if (compName == "Ground") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             SDL_RenderDrawLine(renderer, cx, cy-10, cx, cy);
             SDL_RenderDrawLine(renderer, cx-8, cy, cx+8, cy);
             SDL_RenderDrawLine(renderer, cx-5, cy+5, cx+5, cy+5);
             SDL_RenderDrawLine(renderer, cx-3, cy+10, cx+3, cy+10);
-        } else if (compName == "VCC" || compName == "Battery") {
-            SDL_SetRenderDrawColor(renderer, 200,0,0,255);
-            SDL_RenderDrawLine(renderer, cx, cy-10, cx, cy+5);
+        }
+        else if (compName == "VCC" || compName == "Battery") {
+            SDL_SetRenderDrawColor( renderer, 200,0,0,255);
+            SDL_RenderDrawLine(renderer,cx, cy-10, cx, cy+5);
             SDL_RenderDrawLine(renderer, cx-5, cy, cx+5, cy);
-        } else {
+        }
+        else {
             drawTxt(compName.substr(0,4), area.x+5, area.y+5, {0,0,0,255});
         }
     }
@@ -469,6 +487,13 @@ private:
         string lower = s;
         transform (lower.begin(), lower.end(), lower.begin(), ::tolower);
         return lower;
+    }
+
+    void resetLibExpanded() {
+        for (auto& cat : libCategories) cat.expanded = false;
+        searchFilter = "" ;
+        if (searchBox)
+            searchBox->setTxt( "Search...");
     }
 
     string fileDialog() {
@@ -519,6 +544,15 @@ private:
         return candidate;
     }
 
+    string joinStrings(const vector <string>& vec) const {
+        string result;
+        for (size_t i = 0; i < vec.size(); ++i) {
+            if (i > 0) result += ",";
+            result +=vec[i];
+        }
+        return result;
+    }
+
     void loadRecentPs() {
         ifstream file("recents.txt");
         if (file.is_open( )) {
@@ -532,9 +566,20 @@ private:
                 getline( ss, n, '|');
                 getline(ss, p, '|');
                 getline(ss, d, '|');
-                if (ss >> cw >> ch) { }
+                ss >> cw >> ch;
+                vector<string> ac;
+                if (ss.peek() == '|') {
+                    ss.ignore ();
+                    string compList;
+                    getline(ss, compList);
+                    stringstream cs(compList);
+                    string comp;
+                    while (getline(cs, comp, ',')) {
+                        if (!comp.empty()) ac.push_back(comp);
+                    }
+                }
                 if (!n.empty() && !p.empty() && !d.empty())
-                    recentPs.push_back(project(n, p, d,cw, ch));
+                    recentPs.push_back(project(n, p, d, cw, ch, ac));
             }
             file.close();
         }
@@ -552,7 +597,11 @@ private:
         if ( !file.is_open())
             return;
         for (const auto& p :recentPs) {
-            file << p.name << "|" <<p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH << "\n";
+            file << p.name << "|" <<p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH;
+            if (!p.activeComponents.empty ()) {
+                file << "|" << joinStrings(p.activeComponents);
+            }
+            file << "\n";
         }
         file.close();
     }
@@ -607,6 +656,49 @@ private:
         currentState = app::PROJECT_NAME_DIALOG;
     }
 
+    void saveProjectToFile(const string& path){
+        ofstream file(path);
+        if (!file.is_open() )
+            return;
+        file << canvasWidth << " " << canvasHeight << "\n";
+        file << joinStrings(activeComps) << "\n";
+        file << placedComponents. size() << "\n";
+        for (const auto& pc : placedComponents) {
+            file << pc.name << " " << pc.x << " " << pc.y << "\n";
+        }
+        file.close();
+    }
+
+    bool loadProjectFromFile(const string& path) {
+        ifstream file (path);
+        if (!file.is_open())
+            return false;
+        file >> canvasWidth >> canvasHeight;
+        file.ignore();
+        string line;
+        if (getline(file, line)) {
+            activeComps.clear();
+            stringstream ss(line);
+            string comp;
+            while (getline(ss, comp, ',')) {
+                if (!comp.empty()) activeComps.push_back(comp);
+            }
+        }
+        placedComponents.clear() ;
+        int count = 0;
+        if (file >> count) {
+            file.ignore();
+            for (int i = 0; i < count; ++i) {
+                string cname; int cx, cy;
+                if (file >> cname >> cx >> cy) {
+                    placedComponents.push_back({cname, cx, cy});
+                }
+            }
+        }
+        file.close();
+        return true;
+    }
+
 public:
     PROTEUS() {
         window = nullptr;
@@ -639,14 +731,15 @@ public:
         mseX = 0 ; mseY = 0;
         zoomRct = {0,0,0,0} ;
         showGrid = true ;
-        currentTool = Tool::SELECT ;
+        currentTool = Tool::SELECT;
         tlbrH = 40 ;
-        pnlLW = 220 ; pnlRW = 140 ;
-        vpX = pnlLW ; vpY = tlbrH ;
-        vpW = winW - pnlLW - pnlRW ;
+        pnlLW = 220 ; pnlRW = 140;
+        vpX = pnlLW; vpY = tlbrH;
+        vpW = winW - pnlLW - pnlRW;
         vpH = winH - tlbrH - statH ;
         selLibItm = "" ;
         activeCompsY = 0;
+        currentProjectPath = "";
 
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
         for (size_t i=0; i<libItms.size(); i++) {
@@ -710,13 +803,17 @@ public:
             return false;
         }
         window =SDL_CreateWindow("Proteus Clone - Startup Menu", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 850, 600, SDL_WINDOW_SHOWN);
-        if (!window) return false;
+        if (!window)
+            return false;
         renderer =SDL_CreateRenderer(window,-1, SDL_RENDERER_ACCELERATED);
-        if (!renderer) return false;
+        if (!renderer)
+            return false;
         font = TTF_OpenFont ("arial.ttf", 20);
-        if (!font) { cerr << "Warning: Failed to load arial.ttf" << endl; }
+        if (!font) {
+            cerr << "Warning: Failed to load arial.ttf" << endl;
+        }
         titleFont = TTF_OpenFont("arial.ttf", 30);
-        libFont = TTF_OpenFont("arial.ttf", 14);
+        libFont =TTF_OpenFont("arial.ttf", 14);
 
         btnNewP  = new BUTTONS(renderer, font, 60, 190, 300, 60, {100, 200,150, 255}, {120, 220, 170, 255}, "Create New Project") ;
         btnOpenP = new BUTTONS(renderer, font, 60, 280, 300,60,{144, 238, 144, 255}, {152, 251, 152, 255}, "Open Existing Project");
@@ -760,25 +857,41 @@ public:
                 btnOpenP->events(ev);
                 btnRemRecents->events (ev);
                 for (auto btn: btnRecents) btn->events(ev);
-                if (btnNewP-> click(ev)) { currentState = app::NEW_PROJECT_DIALOG; }
+                if (btnNewP-> click(ev)) {
+                    currentState = app::NEW_PROJECT_DIALOG;
+                }
                 else if (btnOpenP->click(ev)){
                     string chosen = fileDialog();
                     if (!chosen.empty()) {
-                        canvasWidth  = 800; canvasHeight = 600;
-                        string projName = projNameFromPath (chosen);
-                        addToRecent(project (projName, chosen, gDate(), canvasWidth, canvasHeight));
-                        resetView();
-                        currentState = app::WORKSPACE;
-                        cout << "Opened project: " << chosen << endl ;
+                        if (loadProjectFromFile (chosen)) {
+                            currentProjectPath = chosen;
+                            resetView();
+                            resetLibExpanded();
+                            currentState = app::WORKSPACE;
+                            cout << "Opened project: " << chosen << endl;
+                        } else {
+                            cout << "Failed to load project file." << endl;
+                        }
                     }
                 }
-                else if (btnRemRecents->click(ev)) { clearRecents(); cout << "Recent projects cleared."<< endl; }
+                else if (btnRemRecents->click(ev)) {
+                    clearRecents(); cout << "Recent projects cleared."<< endl;
+                }
                 else {
                     for (size_t i = 0; i < btnRecents.size(); i++) {
                         if (btnRecents [i]->click(ev)) {
                             cout << "Loading project: " << recentPs[i].name << endl;
-                            canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
+                            string path= recentPs[i].path;
+                            if (loadProjectFromFile(path)) {
+                                currentProjectPath = path;
+                            } else {
+                                canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
+                                activeComps = recentPs[i].activeComponents;
+                                placedComponents.clear();
+                                currentProjectPath = path;
+                            }
                             resetView();
+                            resetLibExpanded ();
                             currentState = app::WORKSPACE;
                         }
                     }
@@ -786,8 +899,12 @@ public:
             }
             else if (currentState == app::NEW_PROJECT_DIALOG ) {
                 btnPresetA4->events(ev); btnPresetA3->events(ev); btnPresetCustom->events (ev); btnCancelDialog->events(ev);
-                if (btnPresetA4->click (ev)) { canvasWidth = 800; canvasHeight = 600; penProjectName =diffName("Untitled"); openNameDialog(); }
-                else if (btnPresetA3-> click(ev)) { canvasWidth = 1200; canvasHeight = 800; penProjectName = diffName("Untitled"); openNameDialog(); }
+                if (btnPresetA4->click (ev)) {
+                    canvasWidth = 800; canvasHeight = 600; penProjectName =diffName("Untitled"); openNameDialog();
+                }
+                else if (btnPresetA3-> click(ev)) {
+                    canvasWidth = 1200; canvasHeight = 800; penProjectName = diffName("Untitled"); openNameDialog();
+                }
                 else if (btnPresetCustom->click(ev)) {
                     if ( !txtWidth) {
                         txtWidth = new txtIn(renderer, font, 285, 225, 100, 35, true);
@@ -801,15 +918,29 @@ public:
                 else if (btnCancelDialog->click(ev)) { currentState = app::STARTUP_MENU; }
             }
             else if (currentState == app::CUSTOM_SIZE_DIALOG) {
-                if (txtWidth && txtWidth->isActive ()) txtWidth-> handleEvent(ev);
-                if (txtHeight && txtHeight->isActive()) txtHeight->handleEvent(ev);
-                if (btnCustomOK) btnCustomOK->events(ev);
-                if (btnCustomCancel) btnCustomCancel->events(ev);
+                if (txtWidth && txtWidth->isActive ())
+                    txtWidth-> handleEvent(ev);
+                if (txtHeight && txtHeight->isActive())
+                    txtHeight->handleEvent(ev);
+                if (btnCustomOK)
+                    btnCustomOK-> events(ev);
+                if (btnCustomCancel)
+                    btnCustomCancel->events(ev);
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_LEFT) {
                     int mx = ev.button.x, my = ev.button.y;
-                    if (txtWidth && txtWidth->mouseIn(mx, my)) { txtWidth->setActive( true); if (txtHeight) txtHeight-> setActive(false); }
-                    else if (txtHeight && txtHeight->mouseIn(mx, my)) { txtHeight->setActive( true ); if (txtWidth) txtWidth->setActive(false); }
-                    else { if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false); }
+                    if (txtWidth && txtWidth->mouseIn(mx, my)) {
+                        txtWidth->setActive( true);
+                        if (txtHeight)
+                            txtHeight-> setActive(false);
+                    }
+                    else if (txtHeight && txtHeight->mouseIn(mx, my)) {
+                        txtHeight->setActive( true );
+                        if (txtWidth)
+                            txtWidth->setActive(false);
+                    }
+                    else { if (txtWidth) txtWidth->setActive (false);
+                        if (txtHeight)
+                            txtHeight->setActive(false); }
                 }
                 if (btnCustomOK && btnCustomOK->click(ev)) {
                     string wStr= txtWidth  ? txtWidth->gTxt() : ""; string hStr = txtHeight ? txtHeight->gTxt(): "";
@@ -819,39 +950,55 @@ public:
                     penProjectName = diffName("Untitled"); openNameDialog();
                 }
                 else if ( btnCustomCancel && btnCustomCancel->click(ev)) {
-                    if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false);
+                    if (txtWidth)
+                        txtWidth->setActive (false);
+                    if (txtHeight)
+                        txtHeight->setActive(false);
                     currentState =  app ::NEW_PROJECT_DIALOG;
                 }
             }
             else if (currentState == app::PROJECT_NAME_DIALOG) {
                 SDL_StartTextInput();
-                if (txtProjectName && txtProjectName->isActive()) txtProjectName->handleEvent(ev);
-                if (btnNameOK) btnNameOK->events (ev); if (btnNameCancel) btnNameCancel->events(ev);
+                if (txtProjectName && txtProjectName->isActive())
+                    txtProjectName->handleEvent(ev);
+                if (btnNameOK)
+                    btnNameOK->events (ev);
+                if (btnNameCancel)
+                    btnNameCancel->events(ev);
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button ==SDL_BUTTON_LEFT) {
                     int mx = ev.button.x, my = ev.button.y;
                     if (txtProjectName && txtProjectName->mouseIn(mx, my)) txtProjectName->setActive (true);
-                    else { if (txtProjectName) txtProjectName->setActive(false); }
+                    else {
+                        if (txtProjectName)
+                            txtProjectName->setActive(false);
+                    }
                 }
                 if(btnNameOK && btnNameOK->click(ev)) {
                     string name = txtProjectName ? txtProjectName->gTxt() : "";
                     if (name.empty()) name = "Untitled";
                     string finalName = diffName(name);
-                    string path= "C:/projects/" + finalName + ".proj";
-                    addToRecent(project(finalName, path, gDate(), canvasWidth, canvasHeight));
-                    if (txtProjectName) txtProjectName->setActive(false);
+                    string path = "./" + finalName  + ".proj";
+                    activeComps.clear();
+                    placedComponents.clear();
+                    addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
+                    currentProjectPath = path;
+                    if (txtProjectName)
+                        txtProjectName->setActive(false);
                     resetView();
+                    resetLibExpanded();
                     currentState = app::WORKSPACE;
                     cout << "New project created: " << finalName <<" Canvas: " << canvasWidth << "x" << canvasHeight << endl;
                 }
                 else if (btnNameCancel && btnNameCancel->click(ev)) {
-                    if (txtProjectName) txtProjectName->setActive(false);
+                    if (txtProjectName)
+                        txtProjectName->setActive(false);
                     currentState = app::STARTUP_MENU;
                 }
             }
             else if (currentState == app::WORKSPACE){
                 btnBack->events(ev);
-                if (btnBack->click(ev) ) { 
-                    currentState = app::STARTUP_MENU; 
+                if (btnBack->click(ev) ) {
+                    currentState = app::STARTUP_MENU;
                     selLibItm = "";
                 }
 
@@ -868,21 +1015,33 @@ public:
                     currentTool = Tool::COMPONENT;
                     cout<< "Component tool\n";
                 }
-                else if (tlbrBtns[3]->click(ev)) {
-                    cout <<"Save (placeholder)\n"; selLibItm = "";
-                }
-                else if (tlbrBtns[4]->click(ev)) {
-                    string chosen = fileDialog();
-                    if (!chosen.empty()) {
-                        canvasWidth  = 800; canvasHeight = 600;
-                        string projName = projNameFromPath (chosen);
-                        addToRecent(project (projName, chosen, gDate(), canvasWidth, canvasHeight));
-                        cout << "Loaded: " << chosen << endl;
+                else if (tlbrBtns[3]->click(ev)){
+                    if (!currentProjectPath.empty()) {
+                        saveProjectToFile (currentProjectPath);
+                        addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
+                        cout << "Project saved.\n";
                     }
                     selLibItm = "";
                 }
-                else if (tlbrBtns[5]->click(ev)) {cout << "Undo (placeholder)\n"; selLibItm = "";}
-                else if (tlbrBtns[6]->click(ev)) {cout << "Redo (placeholder)\n"; selLibItm = ""; }
+                else if (tlbrBtns[4]->click(ev)) {
+                    string chosen = fileDialog();
+                    if (!chosen.empty ()) {
+                        if (loadProjectFromFile(chosen)) {
+                            currentProjectPath = chosen;
+                            resetView();
+                            resetLibExpanded();
+                            currentState = app::WORKSPACE;
+                            cout << "Loaded: " << chosen << endl;
+                        }
+                    }
+                    selLibItm = "";
+                }
+                else if (tlbrBtns[5]->click(ev)) {
+                    cout << "Undo (placeholder)\n"; selLibItm =  "";
+                }
+                else if (tlbrBtns[6]->click(ev)) {
+                    cout << "Redo (placeholder)\n"; selLibItm = "";
+                }
 
                 if (showLib) {
                     searchBox-> handleEvent(ev);
@@ -893,7 +1052,7 @@ public:
                 }
 
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_l && SDL_GetModState() & KMOD_CTRL) {
-                    showLib = !showLib;
+                    showLib = !showLib ;
                     if (showLib) {
                         searchBox->setTxt("Search...");
                         searchFilter = "";
@@ -903,19 +1062,19 @@ public:
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                     if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
-                        if (searchBox->gTxt() == "Search...")
+                        if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
                     } else {
                         if (searchBox && searchBox->isActive()) {
                             searchBox->setActive(false);
-                            if (searchBox->gTxt().empty())
+                            if (searchBox->gTxt(). empty())
                                 searchBox->setTxt("Search...");
                         }
                     }
 
                     if (showLib && activeCompsY > 0 && mseX >= 0 && mseX< pnlLW &&
                         mseY >= activeCompsY && mseY < activeCompsY + (int)activeComps.size() * 26) {
-                        int index = (mseY - activeCompsY) / 26;
+                        int index = (mseY- activeCompsY) / 26;
                         if (index >= 0 && index <(int)activeComps.size()) {
                             SDL_Rect r = {5, activeCompsY + index * 26, pnlLW - 10, 20};
                             SDL_Rect xRect = {r.x + r.w - 15, r.y + (r.h - 10)/2, 10, 10};
@@ -926,25 +1085,23 @@ public:
                         }
                     }
 
-                    if (showLib && mseX >= 0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
+                    if (showLib && mseX >=0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
                         string lowerFilter = toLower (searchFilter);
                         int yOff = tlbrH +45;
                         bool clickedOnComponent = false;
                         for (auto& cat : libCategories) {
                             yOff += 30;
                             bool showComponents = cat.expanded || !searchFilter.empty();
-                            if (showComponents) {
+                            if(showComponents){
                                 for (auto& comp : cat.components) {
-                                    if (searchFilter.empty() || 
-                                        toLower(cat.name).find(lowerFilter) != string::npos || 
-                                        toLower(comp).find(lowerFilter) != string::npos) {
+                                    if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos || toLower(comp).find(lowerFilter) != string::npos) {
                                         SDL_Rect compRect = {15, yOff, pnlLW-20, 20};
                                         if (mseX >= compRect.x && mseX <= compRect.x+compRect.w && mseY >= compRect.y && mseY <= compRect.y+compRect.h) {
                                             selLibItm = comp;
                                             currentTool = Tool::COMPONENT;
                                             if (ev.button.clicks == 2) {
-                                                if (find(activeComps.begin(), activeComps.end(), comp) == activeComps.end())
-                                                    activeComps.push_back(comp);
+                                                if (find(activeComps.begin(), activeComps.end(),comp) == activeComps.end())
+                                                    activeComps.push_back (comp);
                                             }
                                             clickedOnComponent = true;
                                             break;
@@ -960,16 +1117,15 @@ public:
                             yOff = tlbrH + 45;
                             for (auto& cat : libCategories) {
                                 SDL_Rect catRect = {5, yOff, pnlLW-10, 20};
-                                if (mseX >= catRect.x && mseX <= catRect.x+catRect.w && mseY >= catRect.y && mseY <= catRect.y+catRect.h) {
+                                if (mseX >= catRect.x && mseX <= catRect.x + catRect.w && mseY >= catRect.y && mseY <= catRect.y+catRect.h) {
                                     cat.expanded = !cat.expanded;
                                     break;
                                 }
                                 yOff += 30;
                                 bool showComponents = cat.expanded || !searchFilter.empty();
                                 if (showComponents) {
-                                    for (auto& comp : cat.components) {
-                                        if (searchFilter.empty() || 
-                                            toLower(cat.name).find(lowerFilter) != string::npos || 
+                                    for (auto& comp: cat.components) {
+                                        if (searchFilter.empty() ||toLower (cat.name).find(lowerFilter) != string::npos ||
                                             toLower(comp).find(lowerFilter) != string::npos) {
                                             yOff += 28;
                                         }
@@ -980,32 +1136,58 @@ public:
                         }
                     }
                     else if (mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
-                        mseY >= zoomRct.y && mseY<= zoomRct.y + zoomRct.h) {
+                        mseY >= zoomRct.y && mseY<=zoomRct.y + zoomRct.h) {
                         resetView();
                         selLibItm = "";
                     }
                     else if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
-                        if (!btnBack->click(ev)) {
-                            isPan = true ;
-                            panStartX = ev.button.x ; panStartY = ev.button.y;
-                            panOffXst = panX; panOffYst = panY;
+                        if (!btnBack-> click(ev)) {
+                            if (currentTool == Tool::COMPONENT && !selLibItm.empty()) {
+                                int wx = snapToGrid(scrToWldX(mseX));
+                                int wy = snapToGrid(scrToWldY(mseY));
+                                placedComponents.push_back({selLibItm, wx, wy});
+                            } else {
+                                isPan = true ;
+                                panStartX = ev.button.x ; panStartY = ev.button.y;
+                                panOffXst = panX; panOffYst = panY;
+                            }
                         }
                         selLibItm ="";
                     }
                 }
-
-                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) { isPan = false; }
-                if (isPan && ev.type == SDL_MOUSEMOTION) {
-                    panX = panOffXst + (ev.motion.x - panStartX);
-                    panY = panOffYst + (ev.motion.y - panStartY);
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_RIGHT) {
+                    if (mseX >= vpX && mseX < vpX + vpW && mseY >= vpY && mseY < vpY +vpH) {
+                        for (size_t i = 0; i < placedComponents.size(); ++i) {
+                            int sx = wldToScrX(placedComponents[i].x);
+                            int sy = wldToScrY(placedComponents[i].y)- 10;
+                            SDL_Rect compRect = {sx - 10, sy - 10, 20, 20};
+                            if (mseX >= compRect.x && mseX < compRect.x + compRect.w &&
+                                mseY >= compRect.y && mseY < compRect.y + compRect.h) {
+                                placedComponents.erase (placedComponents.begin() + i);
+                                break;
+                            }
+                        }
+                    }
                 }
-                if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY>=vpY && mseY<vpY+vpH){
+
+                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
+                    isPan = false;
+                }
+                if (isPan && ev.type == SDL_MOUSEMOTION) {
+                    panX = panOffXst + (ev.motion.x- panStartX);
+                    panY = panOffYst + (ev.motion.y- panStartY);
+                }
+                if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY >=vpY && mseY<vpY+vpH){
                     int mx = mseX, my = mseY;
                     float oldZm =zmLvl;
-                    if (ev.wheel.y >0) zmLvl *= 1.1f;
-                    else if (ev.wheel.y < 0) zmLvl /= 1.1f ;
-                    if (zmLvl < 0.2f) zmLvl = 0.2f;
-                    if (zmLvl > 5.0f) zmLvl = 5.0f;
+                    if (ev.wheel.y >0)
+                        zmLvl *= 1.1f;
+                    else if (ev.wheel.y < 0)
+                        zmLvl /= 1.1f ;
+                    if (zmLvl< 0.2f)
+                        zmLvl = 0.2f;
+                    if (zmLvl > 5.0f)
+                        zmLvl = 5.0f;
                     panX = (mx - vpX) - (int)(((mx - vpX) - panX) *(zmLvl / oldZm));
                     panY = (my - vpY) - (int)(((my - vpY) - panY) *(zmLvl / oldZm));
                 }
@@ -1023,7 +1205,7 @@ public:
                     }
                     else if (ev.key.keysym.sym == SDLK_3) {
                         currentTool = Tool::COMPONENT;
-                        cout << "Component tool (keyboard)\n";
+                        cout <<"Component tool (keyboard)\n";
                     }
                     else if (ev.key.keysym.sym == SDLK_DELETE) {
                         cout << "Delete selected item (placeholder)\n";
@@ -1034,36 +1216,45 @@ public:
                         panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
                         panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
                     }
-                    else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS) {
-                        float oldZm = zmLvl; zmLvl/= 1.1f; if (zmLvl < 0.2f) zmLvl = 0.2f;
+                    else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS){
+                        float oldZm = zmLvl; zmLvl/= 1.1f;
+                        if (zmLvl < 0.2f)
+                            zmLvl = 0.2f;
                         int cx = vpW/2 , cy = vpH/2;
                         panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
                         panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
                     }
                     else if (ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL) {
-                        resetView();
+                        resetView ();
                         selLibItm = "";
                     }
                     else if (ev.key.keysym.sym == SDLK_s && SDL_GetModState() & KMOD_CTRL) {
-                        cout << "Ctrl+S: Save (placeholder)\n";
+                        if (!currentProjectPath.empty()) {
+                            saveProjectToFile(currentProjectPath) ;
+                            addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
+                            cout << "Project saved (Ctrl+S).\n";
+                        }
                         selLibItm = "" ;
                     }
                     else if (ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL) {
                         string chosen = fileDialog();
                         if (!chosen.empty()) {
-                            canvasWidth  = 800; canvasHeight = 600;
-                            string projName = projNameFromPath (chosen);
-                            addToRecent(project (projName, chosen, gDate(), canvasWidth, canvasHeight));
-                            cout << "Loaded: " << chosen << endl;
+                            if (loadProjectFromFile(chosen)) {
+                                currentProjectPath = chosen;
+                                resetView();
+                                resetLibExpanded();
+                                currentState = app::WORKSPACE;
+                                cout << "Loaded: " << chosen << endl;
+                            }
                         }
                         selLibItm = "";
                     }
-                    else if (ev.key.keysym.sym == SDLK_z && SDL_GetModState() & KMOD_CTRL) {
+                    else if (ev.key.keysym.sym == SDLK_z && SDL_GetModState()  & KMOD_CTRL) {
                         cout << "Undo (placeholder)\n";
                         selLibItm = "";
                     }
                     else if (ev.key.keysym.sym == SDLK_y && SDL_GetModState() & KMOD_CTRL) {
-                        cout << "Redo (placeholder)\n";
+                        cout << "Redo (placeholder) \n";
                         selLibItm = "";
                     }
                 }
@@ -1079,8 +1270,12 @@ public:
             drawTxt("Proteus", 60, 70, {0,0, 0, 255}, titleFont);
             drawTxt("Recent Projects:", 450, 155, {80, 80, 80, 255} );
             btnNewP->draw(renderer) ; btnOpenP->draw (renderer); btnRemRecents->draw (renderer);
-            if (btnRecents.empty()) { drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 }); }
-            else { for (auto btn : btnRecents) { btn->draw(renderer); } }
+            if (btnRecents.empty()) {
+                drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 });
+            }
+            else { for (auto btn : btnRecents) {
+                btn->draw(renderer);
+            } }
         }
         else if (currentState == app::NEW_PROJECT_DIALOG) {
             SDL_Rect dialogBox ={150, 80, 550, 420};
@@ -1096,17 +1291,29 @@ public:
             int titleW, titleH; if (font) TTF_SizeText(font, "Enter canvas dimensions:",&titleW, &titleH); else titleW= 250;
             int titleX = dlg.x + (dlg.w- titleW) / 2; drawTxt ("Enter canvas dimensions:", titleX, 100, {20, 20, 20, 255});
             drawTxt("Width:", 250, 200, {20, 20, 20,255}); drawTxt("Height:", 430, 200, {20, 20, 20, 255});
-            if (txtWidth) txtWidth->draw(renderer) ; if (txtHeight) txtHeight->draw(renderer);
-            if (btnCustomOK) btnCustomOK-> draw(renderer); if (btnCustomCancel) btnCustomCancel->draw(renderer);
+            if (txtWidth)
+                txtWidth->draw(renderer) ;
+            if (txtHeight)
+                txtHeight->draw(renderer);
+            if (btnCustomOK)
+                btnCustomOK-> draw(renderer);
+            if (btnCustomCancel)
+                btnCustomCancel->draw(renderer);
         }
         else if (currentState == app::PROJECT_NAME_DIALOG) {
             SDL_Rect dlg = {200, 150, 450, 300};
             SDL_SetRenderDrawColor (renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer, &dlg);
             SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect(renderer, &dlg);
-            int titleW, titleH; if (font) TTF_SizeText(font, "Enter project name:", &titleW, &titleH); else titleW = 200;
+            int titleW, titleH;
+            if (font)
+                TTF_SizeText(font, "Enter project name:", &titleW, &titleH); else titleW = 200;
             int titleX = dlg.x +(dlg.w - titleW) / 2; drawTxt("Enter project name:", titleX, 180, {20, 20, 20, 255});
-            if (txtProjectName) txtProjectName->draw(renderer);
-            if (btnNameOK) btnNameOK->draw(renderer); if (btnNameCancel) btnNameCancel->draw(renderer);
+            if (txtProjectName)
+                txtProjectName->draw(renderer);
+            if (btnNameOK)
+                btnNameOK->draw(renderer);
+            if (btnNameCancel)
+                btnNameCancel->draw(renderer);
         }
         else if (currentState ==app::WORKSPACE){
             SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255); SDL_RenderClear (renderer);
@@ -1122,7 +1329,7 @@ public:
                 SDL_RenderFillRect(renderer, &libBg) ;
                 SDL_SetRenderDrawColor(renderer, 170,170,180,255);
                 SDL_RenderDrawLine(renderer, pnlLW, tlbrH, pnlLW, tlbrH +vpH);
-                drawTxt("Library", 8, tlbrH+ 5, {0,0,0,255});
+                drawTxt("Library" , 8, tlbrH+ 5, {0,0,0,255});
 
                 searchBox->draw(renderer);
 
@@ -1142,16 +1349,14 @@ public:
                     drawTxt(cat.name, catTx, catTy, {0,0,0,255});
                     yOff += 30;
                     bool showComponents = cat.expanded || !searchFilter.empty();
-                    if (showComponents) {
+                    if (showComponents){
                         for (auto& comp : cat.components) {
-                            if (searchFilter.empty() || 
-                                toLower(cat.name).find(lowerFilter) != string::npos || 
-                                toLower(comp).find(lowerFilter) != string::npos) {
+                            if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos || toLower(comp).find(lowerFilter)!= string::npos) {
                                 SDL_Rect compRect = {15, yOff, pnlLW-20, 20};
-                                SDL_SetRenderDrawColor(renderer, selLibItm==comp ? 180 : 235, 230, 245, 255);
+                                SDL_SetRenderDrawColor(renderer, selLibItm==comp ?180 : 235, 230, 245, 255);
                                 SDL_RenderFillRect(renderer, &compRect);
                                 SDL_SetRenderDrawColor(renderer, 160,160,160,255);
-                                SDL_RenderDrawRect(renderer, &compRect);
+                                SDL_RenderDrawRect (renderer, &compRect);
                                 int compTextW, compTextH;
                                 TTF_SizeText(libFont, comp.c_str(), &compTextW, &compTextH);
                                 int compTx = compRect.x + (compRect.w - compTextW)/2;
@@ -1165,11 +1370,11 @@ public:
                     }
                 }
                 if (!anyShown && !searchFilter.empty()) {
-                    drawTxt("No results", 10, yOff, {150,0,0,255});
+                    drawTxt("No results", 10, yOff, {150,0,0 ,255});
                     yOff += 22;
                 }
 
-                if (!selLibItm.empty()) {
+                if (!selLibItm.empty( )) {
                     previewRect = {5, yOff+5, pnlLW-10, 60};
                     drawCompPreview(selLibItm, previewRect);
                     yOff += 70;
@@ -1202,21 +1407,31 @@ public:
             SDL_Rect propBg = {winW - pnlRW, tlbrH, pnlRW, vpH};
             SDL_SetRenderDrawColor(renderer, 225,230,240,255); SDL_RenderFillRect(renderer, &propBg);
             SDL_SetRenderDrawColor(renderer, 170,170,180,255);
-            SDL_RenderDrawLine(renderer, winW - pnlRW, tlbrH, winW - pnlRW, tlbrH+vpH);
+            SDL_RenderDrawLine (renderer, winW - pnlRW, tlbrH, winW - pnlRW, tlbrH+vpH);
             int propTitleW, propTitleH;
             TTF_SizeText(font, "Properties", &propTitleW, &propTitleH);
-            int propTitleX = winW - pnlRW + (pnlRW - propTitleW)/2;
+            int propTitleX = winW - pnlRW +(pnlRW - propTitleW)/2;
             drawTxt("Properties", propTitleX, tlbrH+5, {0,0,0,255});
             if (!selLibItm.empty()) {
                 int itemW, itemH;
                 TTF_SizeText(font, selLibItm.c_str(), &itemW, &itemH);
                 int itemX = winW - pnlRW + (pnlRW - itemW)/2;
-                drawTxt(selLibItm, itemX, tlbrH+45, {0,0,0,255});
+                drawTxt(selLibItm, itemX, tlbrH +45, {0,0,0,255});
             }
 
             drawGrid();
+            for (const auto& pc : placedComponents) {
+                int sx = wldToScrX(pc.x);
+                int sy = wldToScrY(pc.y) -10;
+                SDL_Rect compRect = {sx - 10, sy - 10, 20, 20};
+                SDL_SetRenderDrawColor(renderer, 100,100, 255, 200);
+                SDL_RenderFillRect (renderer, &compRect);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                SDL_RenderDrawRect(renderer, &compRect);
+                drawTxt(pc.name.substr(0,2), sx - 12, sy- 5, {0,0,0,255}, libFont);
+            }
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
-            drawStatusBar() ;                                                                        
+            drawStatusBar() ;
         }
 
         SDL_RenderPresent(renderer);
