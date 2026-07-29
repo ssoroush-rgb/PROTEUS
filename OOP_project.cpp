@@ -49,7 +49,7 @@ private:
     SDL_Rect box;
     string text;
     bool active ;
-    bool numericOnly;
+    bool numericOnly ;
     SDL_Texture* txtTexture;
     TTF_Font* font;
     SDL_Renderer* renderer;
@@ -279,14 +279,13 @@ private:
 
     txtIn* txtProjectName;
     BUTTONS* btnNameOK;
-    BUTTONS*  btnNameCancel;
+    BUTTONS* btnNameCancel;
 
     BUTTONS* btnBack;
 
     int canvasWidth;
     int canvasHeight;
     string penProjectName;
-
 
     int grdSz;
     float zmLvl;
@@ -312,6 +311,12 @@ private:
     vector<SDL_Rect> libRcts;
     string selLibItm;
 
+    struct PlacedComponent {
+        string name;
+        int x, y;
+    };
+    vector <PlacedComponent> placedComponents;
+
     int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}
     int wldToScrY(int wy) const { return vpY + (int)(panY + (canvasHeight - wy) * zmLvl);}
     int scrToWldX(int sx) const { return (int)((sx - vpX - panX) / zmLvl); }
@@ -324,7 +329,6 @@ private:
         panX = 1;
         panY = (winH -tlbrH - statH) - canvasHeight - 1;
     }
-
 
     void drawGrid() {
         if (!showGrid) return ;
@@ -568,8 +572,8 @@ public:
         winW = 850;winH = 600;
         mseX = 0 ; mseY = 0;
         zoomRct = {0,0,0,0} ;
-        showGrid = true;
         currentTool = Tool::SELECT;
+        showGrid = true;
         tlbrH = 40;
         pnlLW = 140 ;pnlRW = 140;
         vpX = pnlLW ; vpY = tlbrH;
@@ -597,11 +601,12 @@ public:
         delete btnCustomCancel;
         delete txtProjectName;
         delete btnNameOK;
-        delete  btnNameCancel;
+        delete btnNameCancel;
         delete btnBack;
 
         for (auto btn :btnRecents)
             delete btn;
+
         for (auto btn : tlbrBtns)
             delete btn;
         if (titleFont)
@@ -622,21 +627,26 @@ public:
             cerr <<"SDL Init failed: " <<SDL_GetError() << endl;
             return false;
         }
+
         if (TTF_Init() ==-1){
             cerr << "SDL_ttf Init failed: " << TTF_GetError() << endl;
             return false;
         }
+
         window =SDL_CreateWindow("Proteus Clone - Startup Menu", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 850, 600, SDL_WINDOW_SHOWN);
         if (!window) return false;
         renderer =SDL_CreateRenderer(window,-1, SDL_RENDERER_ACCELERATED);
         if (!renderer) return false;
+
         font = TTF_OpenFont ("arial.ttf", 20);
         if (!font) { cerr << "Warning: Failed to load arial.ttf" << endl; }
         titleFont = TTF_OpenFont("arial.ttf", 30);
 
         btnNewP  = new BUTTONS(renderer, font, 60, 190, 300, 60, {100, 200,150, 255}, {120, 220, 170, 255}, "Create New Project") ;
         btnOpenP = new BUTTONS(renderer, font, 60, 280, 300,60,{144, 238, 144, 255}, {152, 251, 152, 255}, "Open Existing Project");
+
         btnRemRecents = new BUTTONS (renderer, font, 60, 500, 200, 40, {255, 204, 153, 255}, {255, 178, 102, 255}, "Remove Recents");
+
         btnPresetA4 = new BUTTONS (renderer, font,213, 180, 180, 45, {200,155, 240, 255}, {180, 130, 225, 255}, "A4 (800x600)");
         btnPresetA3 =new BUTTONS(renderer, font, 456, 180,180, 45,{200, 155, 240, 255}, {180, 130, 225, 255},"A3 (1200x800)");
         btnPresetCustom = new BUTTONS (renderer, font, 325, 245, 200,45,{200, 155, 240, 255}, {180, 130,225, 255}, "Custom Size...");
@@ -644,6 +654,7 @@ public:
 
         btnBack = new BUTTONS(renderer, font, 5, 8, 60, 24, {255,255,255,255}, {230,230,230,255}, "Back");
 
+        loadRecentPs();
         int xpos= vpX + 5;
         tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos+=80;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
@@ -653,7 +664,6 @@ public:
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Undo")); xpos+=65;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24,  {255,255,255,255},{230,230,230,255}, "Redo"));
 
-        loadRecentPs();
         running =true;
         return true;
     }
@@ -664,6 +674,7 @@ public:
             if (ev.type == SDL_QUIT) {
                 running = false;
             }
+
             if (ev.type == SDL_MOUSEMOTION) {
                 SDL_GetMouseState(&mseX , &mseY);
             }
@@ -672,8 +683,8 @@ public:
                 btnNewP->events(ev);
                 btnOpenP->events(ev);
                 btnRemRecents->events (ev);
-                for (auto btn: btnRecents)
-                    btn->events(ev);
+                for (auto btn: btnRecents) btn->events(ev);
+
                 if (btnNewP-> click(ev)) {
                     currentState = app::NEW_PROJECT_DIALOG;
                 }
@@ -688,12 +699,14 @@ public:
                         cout << "Opened project: " << chosen << endl ;
                     }
                 }
-                else if (btnRemRecents->click(ev))
-                    { clearRecents();cout << "Recent projects cleared."<< endl;}
+                else if (btnRemRecents->click(ev)) {
+                    clearRecents();
+                    cout << "Recent projects cleared."<< endl;
+                }
                 else {
                     for (size_t i = 0; i < btnRecents.size(); i++) {
                         if (btnRecents [i]->click(ev)) {
-                            cout << "Loading project: " << recentPs[i].name <<endl;
+                            cout << "Loading project: " << recentPs[i].name << endl;
                             canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
                             resetView();
                             currentState = app::WORKSPACE;
@@ -732,60 +745,44 @@ public:
                     else if (txtHeight && txtHeight->mouseIn(mx, my)) { txtHeight->setActive( true ); if (txtWidth) txtWidth->setActive(false); }
                     else { if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false); }
                 }
+
                 if (btnCustomOK && btnCustomOK->click(ev)) {
                     string wStr= txtWidth  ? txtWidth->gTxt() : ""; string hStr = txtHeight ? txtHeight->gTxt(): "";
-                    if (!wStr.empty() && !hStr.empty()) {
-                        canvasWidth = stoi (wStr); canvasHeight = stoi(hStr);
-                    }
-                    else {
-                        canvasWidth = 800; canvasHeight = 600;
-                    }
-                    if (txtWidth)
-                        txtWidth->setActive (false);
-                    if (txtHeight)
-                        txtHeight->setActive(false);
-                    penProjectName = diffName("Untitled");
-                    openNameDialog();
+                    if (!wStr.empty() && !hStr.empty()) { canvasWidth = stoi (wStr); canvasHeight = stoi(hStr); }
+                    else { canvasWidth = 800; canvasHeight = 600; }
+                    if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false);
+                    penProjectName = diffName("Untitled"); openNameDialog();
                 }
                 else if ( btnCustomCancel && btnCustomCancel->click(ev)) {
-                    if (txtWidth)
-                        txtWidth->setActive (false);
-                    if (txtHeight)
-                        txtHeight->setActive(false);
+                    if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false);
                     currentState =  app ::NEW_PROJECT_DIALOG;
                 }
             }
             else if (currentState == app::PROJECT_NAME_DIALOG) {
                 SDL_StartTextInput();
-                if (txtProjectName && txtProjectName->isActive())
-                    txtProjectName->handleEvent(ev);
-                if (btnNameOK)
-                    btnNameOK->events (ev);
-                if (btnNameCancel)
-                    btnNameCancel->events(ev);
+                if (txtProjectName && txtProjectName->isActive()) txtProjectName->handleEvent(ev);
+                if (btnNameOK) btnNameOK->events (ev);
+                if (btnNameCancel) btnNameCancel->events(ev);
+
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button ==SDL_BUTTON_LEFT) {
                     int mx = ev.button.x, my = ev.button.y;
-                    if (txtProjectName && txtProjectName->mouseIn(mx, my))
-                        txtProjectName->setActive (true);
-                    else { if (txtProjectName)
-                        txtProjectName->setActive(false); }
+                    if (txtProjectName && txtProjectName->mouseIn(mx, my)) txtProjectName->setActive (true);
+                    else { if (txtProjectName) txtProjectName->setActive(false); }
                 }
+
                 if(btnNameOK && btnNameOK->click(ev)) {
                     string name = txtProjectName ? txtProjectName->gTxt() : "";
-                    if (name.empty())
-                        name = "Untitled";
+                    if (name.empty()) name = "Untitled";
                     string finalName = diffName(name);
                     string path= "C:/projects/" + finalName + ".proj";
                     addToRecent(project(finalName, path, gDate(), canvasWidth, canvasHeight));
-                    if (txtProjectName)
-                        txtProjectName->setActive(false);
+                    if (txtProjectName) txtProjectName->setActive(false);
                     resetView ();
                     currentState = app::WORKSPACE;
                     cout << "New project created: " << finalName <<" Canvas: " << canvasWidth << "x" << canvasHeight << endl;
                 }
-                else if (btnNameCancel && btnNameCancel-> click(ev)) {
-                    if (txtProjectName)
-                        txtProjectName->setActive(false);
+                else if (btnNameCancel && btnNameCancel->click(ev)) {
+                    if (txtProjectName) txtProjectName->setActive(false);
                     currentState = app::STARTUP_MENU;
                 }
             }
@@ -795,8 +792,7 @@ public:
                     currentState = app::STARTUP_MENU;
                 }
 
-                for (auto b : tlbrBtns)
-                    b->events(ev);
+                for (auto b : tlbrBtns) b->events(ev);
                 if (tlbrBtns[0]->click(ev)) {
                     currentTool = Tool::SELECT;
                     cout << "Select tool \n";
@@ -864,19 +860,27 @@ public:
                     }
                     else if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
                         if (!btnBack->click(ev)) {
-                            isPan = true ;
-                            panStartX = ev.button.x ; panStartY = ev.button.y;
-                            panOffXst = panX; panOffYst = panY;
+                            if (currentTool == Tool ::COMPONENT && !selLibItm.empty()) {
+                                int wx = snapToGrid(scrToWldX(mseX));
+                                int wy = snapToGrid(scrToWldY( mseY));
+                                placedComponents.push_back({selLibItm, wx, wy});
+                                selLibItm = "" ;
+                            } else {
+                                isPan = true ;
+                                panStartX = ev.button.x ; panStartY = ev.button.y;
+                                panOffXst = panX; panOffYst = panY;
+                            }
                         }
                     }
                 }
-                if (ev.type == SDL_MOUSEBUTTONUP  && ev.button.button == SDL_BUTTON_LEFT) {
+                if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
                     isPan = false;
                 }
                 if (isPan && ev.type == SDL_MOUSEMOTION) {
                     panX = panOffXst + (ev.motion.x - panStartX);
                     panY = panOffYst + (ev.motion.y - panStartY);
                 }
+
                 if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY>=vpY && mseY<vpY+vpH){
                     int mx = mseX, my = mseY;
                     float oldZm =zmLvl;
@@ -887,6 +891,7 @@ public:
                     panX = (mx - vpX) - (int)(((mx - vpX) - panX) *(zmLvl / oldZm));
                     panY = (my - vpY) - (int)(((my - vpY) - panY) *(zmLvl / oldZm));
                 }
+
                 if (ev.type == SDL_KEYDOWN) {
                     if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
                         float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
@@ -934,9 +939,7 @@ public:
             drawTxt("Proteus", 60, 70, {0,0, 0, 255}, titleFont);
             drawTxt("Recent Projects:", 450, 155, {80, 80, 80, 255} );
             btnNewP->draw(renderer) ; btnOpenP->draw (renderer); btnRemRecents->draw(renderer);
-            if (btnRecents.empty()) {
-                drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 });
-            }
+            if (btnRecents.empty()) { drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 }); }
             else { for (auto btn : btnRecents) { btn->draw(renderer); } }
         }
         else if (currentState == app::NEW_PROJECT_DIALOG) {
@@ -969,30 +972,23 @@ public:
             SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255); SDL_RenderClear (renderer);
 
             SDL_Rect tlbrBg = {0,0,winW, tlbrH};
-            SDL_SetRenderDrawColor(renderer, 150,170,200,255);
-            SDL_RenderFillRect(renderer, &tlbrBg);
+            SDL_SetRenderDrawColor(renderer, 150,170,200,255); SDL_RenderFillRect(renderer, &tlbrBg);
             btnBack->draw(renderer);
-            for (auto b : tlbrBtns)
-                b->draw(renderer) ;
+            for (auto b : tlbrBtns) b->draw(renderer) ;
 
             SDL_Rect libBg = {0, tlbrH, pnlLW, vpH};
-            SDL_SetRenderDrawColor(renderer, 225,230,240,255);
-            SDL_RenderFillRect(renderer,&libBg);
+            SDL_SetRenderDrawColor(renderer, 225,230,240,255); SDL_RenderFillRect(renderer,&libBg);
             SDL_SetRenderDrawColor(renderer, 170,170,180,255 );
             SDL_RenderDrawLine(renderer, pnlLW, tlbrH, pnlLW, tlbrH+vpH);
             drawTxt("Library", 8, tlbrH+5, {0,0,0,255});
             for (size_t i = 0; i <libItms.size(); i++) {
                 SDL_Rect r = libRcts[i];
-                SDL_SetRenderDrawColor(renderer, 210,220,240,255);
-                SDL_RenderFillRect (renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 210,220,240,255); SDL_RenderFillRect (renderer, &r);
                 if (selLibItm == libItms[i]) {
-                    SDL_SetRenderDrawColor(renderer, 160,190,220,255);
-                    SDL_RenderFillRect(renderer, &r);
-                    SDL_SetRenderDrawColor( renderer, 80,110,160,255);
-                    SDL_RenderDrawRect(renderer, &r);
+                    SDL_SetRenderDrawColor(renderer, 160,190,220,255); SDL_RenderFillRect(renderer, &r);
+                    SDL_SetRenderDrawColor( renderer, 80,110,160,255); SDL_RenderDrawRect(renderer, &r);
                 } else {
-                    SDL_SetRenderDrawColor(renderer, 170,180,200,255);
-                    SDL_RenderDrawRect(renderer, &r);
+                    SDL_SetRenderDrawColor(renderer, 170,180,200,255); SDL_RenderDrawRect(renderer, &r);
                 }
                 int textW, textH;
                 TTF_SizeText(font, libItms[i].c_str(), &textW, &textH);
@@ -1001,9 +997,19 @@ public:
                 drawTxt(libItms[i], tx, ty, {0,0,0,255});
             }
 
+            for (const auto& pc : placedComponents) {
+                int sx = wldToScrX(pc.x);
+                int sy = wldToScrY(pc.y);
+                SDL_Rect r= {sx - 8, sy -8, 16, 16};
+                SDL_SetRenderDrawColor(renderer, 100,100,255, 255);
+                SDL_RenderFillRect (renderer, &r);
+                SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+                SDL_RenderDrawRect(renderer, &r );
+                drawTxt(pc.name.substr(0,2), sx - 10, sy - 6, {0,0,0,255});
+            }
+
             SDL_Rect propBg = {winW - pnlRW, tlbrH, pnlRW, vpH};
-            SDL_SetRenderDrawColor(renderer, 225,230,240,255);
-            SDL_RenderFillRect(renderer, &propBg);
+            SDL_SetRenderDrawColor(renderer, 225,230,240,255); SDL_RenderFillRect(renderer, &propBg);
             SDL_SetRenderDrawColor(renderer, 170, 170,180,255);
             SDL_RenderDrawLine(renderer, winW - pnlRW, tlbrH, winW - pnlRW, tlbrH + vpH);
             int propTitleW, propTitleH;
@@ -1044,7 +1050,6 @@ int main (int argc, char* argv[ ]){
         app.render ();
         SDL_Delay(16);
     }
-
 
     return 0;
 }
