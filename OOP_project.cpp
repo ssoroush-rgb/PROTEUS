@@ -9,10 +9,22 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <algorithm>
+#include <cmath>
+
 
 
 
 using namespace std;
+
+struct placedComp {
+    
+    string name;                 
+    int x, y;                    
+    int angle;                   
+    bool flipH,flipV;           
+    string label;                
+    string value;                
+};                              
 
 struct project {
     string name;
@@ -20,10 +32,10 @@ struct project {
     string lastP;
     int canvasW;
     int canvasH;
-    vector<string> activeComponents;                                
+    vector<string> activeComponents;
 
     project(string n, string p , string date, int cw = 800, int ch = 600, vector<string> ac = {})
-        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch), activeComponents (ac) {}       
+        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch), activeComponents (ac) {}
 };
 
 enum class app {
@@ -97,11 +109,8 @@ public:
         active = a;
         if (active) {
             SDL_StartTextInput();
-        }
-        else{
-            SDL_StopTextInput() ;
-        }
-    }
+        }                               
+    }                                   
 
     void handleEvent (const SDL_Event& e) {
         if ( !active)
@@ -162,26 +171,26 @@ public:
         }
     }
 
-    void drawAt(SDL_Renderer* rend, int x, int y) const { 
-        SDL_Rect shiftedBox = {x, y, box.w, box.h}; 
-        SDL_SetRenderDrawColor (rend, 255, 255, 255, 255); 
-        SDL_RenderFillRect(rend,&shiftedBox); 
-        if (active) 
-            SDL_SetRenderDrawColor( rend, 50, 180, 50, 255); 
+    void drawAt(SDL_Renderer* rend, int x, int y) const {
+        SDL_Rect shiftedBox = {x, y, box.w, box.h};
+        SDL_SetRenderDrawColor (rend, 255, 255, 255, 255);
+        SDL_RenderFillRect(rend,&shiftedBox);
+        if (active)
+            SDL_SetRenderDrawColor( rend, 50, 180, 50, 255);
         else
-            SDL_SetRenderDrawColor (rend, 120,120, 120, 255); 
-        SDL_RenderDrawRect(rend, &shiftedBox); 
+            SDL_SetRenderDrawColor (rend, 120,120, 120, 255);
+        SDL_RenderDrawRect(rend, &shiftedBox);
 
         if (txtTexture) {
-            SDL_Rect textRect; 
-            textRect.w = min(shiftedBox.w - 10, 200); 
-            textRect.h = shiftedBox.h - 6 ; 
+            SDL_Rect textRect;
+            textRect.w = min(shiftedBox.w - 10, 200);
+            textRect.h = shiftedBox.h - 6 ;
             SDL_QueryTexture( txtTexture, nullptr, nullptr, &textRect.w, &textRect.h);
             textRect.x = shiftedBox.x + 5;
-            textRect.y = shiftedBox.y + (shiftedBox.h - textRect.h) / 2; 
-            SDL_RenderCopy(rend, txtTexture, nullptr, &textRect); 
-        } 
-    } 
+            textRect.y = shiftedBox.y + (shiftedBox.h - textRect.h) / 2;
+            SDL_RenderCopy(rend, txtTexture, nullptr, &textRect);
+        }
+    }
 
     string gTxt() const { return text; }
 
@@ -192,7 +201,8 @@ public:
                 my >= box.y && my <= box.y + box.h );
     }
 
-    SDL_Rect gBox() const { return box; } 
+    SDL_Rect gBox() const { return box; }
+    void setBox (int x, int y, int w, int h) { box = {x, y, w, h}; }      
 };
 
 
@@ -275,28 +285,29 @@ public:
         }
     }
 
-    void drawAt(SDL_Renderer* renderer, int x, int y) const { 
-        SDL_Rect shiftedRect = { x, y, rect.w, rect.h}; 
-        SDL_Rect shiftedTextRect = { 
-            x + (rect.w - textRect.w) / 2, y + (rect.h - textRect.h) / 2, textRect.w, textRect.h 
-        }; 
+    void drawAt(SDL_Renderer* renderer, int x, int y) const {
+        SDL_Rect shiftedRect = { x, y, rect.w, rect.h};
+        SDL_Rect shiftedTextRect = {
+            x + (rect.w - textRect.w) / 2, y + (rect.h - textRect.h) / 2, textRect.w, textRect.h
+        };
 
-        if (hover) { 
-            SDL_SetRenderDrawColor(renderer,hoverColor.r, hoverColor.g,hoverColor.b, hoverColor.a); 
-        } 
-        else { 
-            SDL_SetRenderDrawColor(renderer,normalColor.r, normalColor.g, normalColor.b, normalColor.a); 
-        } 
-        SDL_RenderFillRect(renderer, &shiftedRect); 
-        SDL_SetRenderDrawColor(renderer, 80,80, 80, 255) ; 
-        SDL_RenderDrawRect(renderer, &shiftedRect); 
+        if (hover) {
+            SDL_SetRenderDrawColor(renderer,hoverColor.r, hoverColor.g,hoverColor.b, hoverColor.a);
+        }
+        else {
+            SDL_SetRenderDrawColor(renderer,normalColor.r, normalColor.g, normalColor.b, normalColor.a);
+        }
+        SDL_RenderFillRect(renderer, &shiftedRect);
+        SDL_SetRenderDrawColor(renderer, 80,80, 80, 255) ;
+        SDL_RenderDrawRect(renderer, &shiftedRect);
 
         if (txtTexture) {
             SDL_RenderCopy(renderer , txtTexture, nullptr, &shiftedTextRect);
         }
     }
 
-    SDL_Rect getRect() const { return rect;}
+    SDL_Rect gRect() const { return rect;}
+    void setRect(int x, int y, int w, int h ) { rect = {x, y, w, h}; textRect.x = x + (w - textRect.w)/2; textRect.y = y + (h - textRect.h)/2; }
 };
 
 
@@ -376,13 +387,16 @@ private:
     bool showLib;
     bool showProp;
     int activeCompsY;
-    string currentProjectPath;                                         
+    string currentProjectPath;
 
-    struct placedComp {
-        string name;
-        int x, y;
-    };
-    vector<placedComp> placedComponents;                          
+    vector <placedComp> placedComponents;
+
+    vector<size_t> selectedIndices;
+    bool draggingComponents;
+    int dragStartX, dragStartY;
+    vector<placedComp>  dragSnapshots;
+    SDL_Rect selectionRect;
+    bool drawingSelection;
 
     int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}
     int wldToScrY(int wy) const { return vpY + (int)(panY + (canvasHeight - wy) * zmLvl);}
@@ -391,15 +405,26 @@ private:
 
     int snapToGrid (int val) const {return ((val + grdSz /2) / grdSz) * grdSz;}
 
-    enum UndoType {COMP_PLACE, COMP_DELETE, ACTIVE_ADD, ACTIVE_REMOVE };
+    enum UndoType {COMP_PLACE, COMP_DELETE, COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT};
     struct UndoAction{
         UndoType type;
         placedComp comp;
+        placedComp oldComp;
         string compName;
         int activeIndex;
+        vector<placedComp> compsBefore;
+        vector<placedComp> compsAfter ;
     };
     vector<UndoAction> undoStack;
     vector<UndoAction> redoStack;
+
+    txtIn* propLabelInput;
+    txtIn* propValueInput;
+    BUTTONS*btnPropOK;
+    BUTTONS* btnPropCancel;
+    size_t editingIndex;
+    size_t lastClickedIndex;
+    Uint32 lastClickTime;
 
     void pushUndo (const UndoAction& action){
         undoStack.push_back(action);
@@ -443,6 +468,30 @@ private:
                 redoStack.push_back(redoAct);
             }
         }
+        else if (act.type == COMP_MOVE){
+            placedComponents = act.compsAfter;
+            UndoAction redoAct = act;
+            redoAct.compsAfter = placedComponents;
+            redoAct.compsBefore = act. compsAfter;
+            redoStack.push_back(redoAct);
+        }
+        else if (act.type == COMP_EDIT) {
+            size_t idx = -1;
+            for(size_t i = 0; i < placedComponents.size(); ++i){
+                if (placedComponents[i].name== act.oldComp.name && placedComponents[i].x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < placedComponents.size() ) {
+                placedComponents[idx] =act.comp;
+                UndoAction redoAct;
+                redoAct.type = COMP_EDIT;
+                redoAct.oldComp = act.comp;
+                redoAct.comp = act.oldComp;
+                redoStack.push_back (redoAct);
+            }
+        }
     }
 
     void redo() {
@@ -479,6 +528,23 @@ private:
                 undoAct.compName = act.compName;
                 undoAct.activeIndex =  idx;
                 undoStack.push_back(undoAct);
+            }
+        }
+        else if (act.type ==COMP_MOVE) {
+            placedComponents = act.compsAfter;
+            undoStack.push_back(act);
+        }
+        else if (act.type == COMP_EDIT) {
+            size_t idx =-1;
+            for (size_t i = 0; i < placedComponents.size();++i) {
+                if (placedComponents[i].name == act.oldComp.name && placedComponents[i] .x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < placedComponents.size()){
+                placedComponents[idx] = act.comp;
+                undoStack.push_back(act);
             }
         }
     }
@@ -566,7 +632,7 @@ private:
         }
     }
 
-    void drawCompPreview(const string& compName, SDL_Rect area, bool drawBg = true) {
+    void drawCompPreview(const string& compName, SDL_Rect area,const placedComp& comp, bool drawBg = true){
         if (drawBg){
             SDL_SetRenderDrawColor(renderer, 245,245,245,255);
             SDL_RenderFillRect(renderer , &area);
@@ -574,66 +640,131 @@ private:
             SDL_RenderDrawRect(renderer, &area);
         }
 
-        int cx = area.x + area.w/2, cy = area.y + area.h/2;
+        int cx = area.x + area.w / 2, cy = area.y + area.h/ 2;
+        auto rotatePoint = [&](int px, int py, float rad) -> pair<int,int> {
+            float s = std::sin(rad) , c = std::cos(rad);
+            int dx = px - cx, dy = py - cy;
+            int rx = (int)(dx * c - dy * s ) + cx;
+            int ry = (int)(dx * s + dy * c ) + cy;
+            return {rx, ry};
+        };
+        float rad = comp.angle *3.14159f / 180.0f;
+        int sx = comp.flipH ? -1 : 1;
+        int sy = comp.flipV ? -1 : 1;
+        auto flipPoint = [&](int px, int py) -> pair<int,int> {
+            int dx = px - cx, dy = py - cy ;
+            return {cx + dx * sx, cy + dy * sy};
+        };
+        auto transform = [&] (int x, int y) -> pair<int,int> {
+            auto [fx, fy] = flipPoint(x, y);
+            return rotatePoint(fx, fy,rad);
+        };
+
         if (compName == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            int totalW = min(60, area.w - 10);
-            int startX =area.x + (area.w - totalW) / 2;
+            int totalW = min(60, area.w- 10);
+            int startX = area.x + (area.w - totalW) / 2;
             int x = startX, y = cy;
-            for (int i=0; i<4; i++) {
-                SDL_RenderDrawLine(renderer, x, y, x+ 8, y-8);
-                x+=8; y-=8;
-                SDL_RenderDrawLine(renderer, x, y, x+8, y+8);
+            for (int i=0; i<4; i++){
+                auto p1 = transform(x, y);
+                auto p2 = transform(x+8, y-8);
+                x+=8;y-=8;
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+                p1 = transform(x, y);
+                p2 = transform(x+8, y+8);
                 x+=8; y+=8;
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first,  p2.second);
             }
         }
         else if (compName == "Capacitor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            SDL_RenderDrawLine(renderer, cx-10, cy-15, cx -10, cy+15);
-            SDL_RenderDrawLine(renderer, cx+10, cy-15, cx+10, cy+15);
+            auto p1 = transform (cx-10, cy-15);
+            auto p2 = transform (cx-10, cy+15);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx+10, cy-15);
+            p2 = transform(cx+10, cy+15);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
         else if (compName == "Inductor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             int totalW = min (50, area.w - 10);
-            int startX = area.x + (area.w - totalW) / 2;
+            int startX = area.x + (area.w - totalW) /2;
             int x = startX, y = cy;
             for (int i=0; i< 5; i++) {
-                SDL_RenderDrawLine(renderer, x, y, x+5, y-7);
+                auto p1 = transform(x, y);
+                auto p2 = transform(x+5, y-7);
                 x+=5; y-=7 ;
-                SDL_RenderDrawLine(renderer, x, y, x+5, y+7);
+                SDL_RenderDrawLine(renderer, p1.first, p1.second,p2.first, p2.second);
+                p1 = transform (x, y);
+                p2 = transform (x+5, y+7);
                 x+=5; y+=7;
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             }
         }
         else if (compName == "LED") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            SDL_RenderDrawLine(renderer, cx-8, cy-10, cx-8, cy+10);
-            SDL_RenderDrawLine(renderer, cx-8, cy-10, cx+4, cy);
-            SDL_RenderDrawLine(renderer, cx-8, cy+10, cx+4, cy) ;
-            SDL_RenderDrawLine(renderer, cx +4, cy-10, cx+4, cy+10);
-            SDL_RenderDrawLine(renderer, cx+10, cy-8, cx+6, cy-4);
-            SDL_RenderDrawLine(renderer, cx+10,  cy-8, cx+6, cy-2);
-            SDL_RenderDrawLine(renderer, cx+10, cy+8, cx+6, cy+4);
-            SDL_RenderDrawLine(renderer, cx+10, cy+8, cx+6, cy+2);
+            auto p1 =transform(cx-8, cy-10);
+            auto p2 =transform(cx-8, cy+10);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-8, cy-10);
+            p2 = transform(cx+4, cy);
+            SDL_RenderDrawLine(renderer,p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-8, cy+10);
+            p2 = transform(cx+4, cy) ;
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx +4, cy-10);
+            p2 = transform(cx+4, cy+10);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx+10,cy-8);
+            p2 = transform(cx+6, cy-4);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx+10,  cy-8);
+            p2 =transform(cx+6, cy-2);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx+10, cy+8);
+            p2 = transform(cx+6, cy+4);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx+10, cy+8);
+            p2 = transform(cx+6, cy+2);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
         else if (compName == "Transistor" || compName == "NPN" || compName == "PNP") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            SDL_RenderDrawLine(renderer, cx, cy-10, cx, cy+10);
-            SDL_RenderDrawLine(renderer, cx-8, cy-4, cx+8, cy-8);
-            SDL_RenderDrawLine(renderer, cx-8, cy+4, cx+8, cy+8);
-            SDL_Rect circle = {cx-12, cy-12, 24,24};
+            auto p1 = transform(cx, cy-10);
+            auto  p2 = transform(cx, cy+10);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-8, cy-4 );
+            p2 = transform(cx+8, cy-8);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-8, cy+4);
+            p2 =transform(cx+8, cy+8);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            SDL_Rect circle ={cx-12, cy-12, 24,24};
             SDL_RenderDrawRect(renderer, &circle);
         }
-        else if (compName == "Ground") {
+        else if (compName == "Ground" ) {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            SDL_RenderDrawLine(renderer, cx, cy-10, cx, cy);
-            SDL_RenderDrawLine(renderer, cx-8, cy, cx+8, cy);
-            SDL_RenderDrawLine(renderer, cx-5, cy+5, cx+5, cy+5);
-            SDL_RenderDrawLine(renderer, cx-3, cy+10, cx+3, cy+10);
+            auto p1 = transform(cx, cy-10);
+            auto p2 = transform(cx, cy);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2. first, p2.second);
+            p1 = transform(cx-8, cy);
+            p2  = transform(cx+8, cy);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-5, cy+5);
+            p2 = transform(cx+5, cy+5) ;
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-3, cy+10);
+            p2 = transform(cx+3,cy+10);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
-        else if (compName == "VCC" || compName == "Battery") {
+        else if ( compName == "VCC" || compName == "Battery") {
             SDL_SetRenderDrawColor( renderer, 200,0,0,255);
-            SDL_RenderDrawLine(renderer,cx, cy-10, cx, cy+5);
-            SDL_RenderDrawLine(renderer, cx-5, cy, cx+5, cy);
+            auto p1 = transform(cx, cy-10);
+            auto p2 = transform(cx, cy+5) ;
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p1 = transform(cx-5, cy);
+            p2 =transform(cx+5, cy);
+            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
         else {
             drawTxt(compName.substr(0,4), area.x+5, area.y+5, {0,0,0,255});
@@ -653,6 +784,10 @@ private:
         showProp= false;
         undoStack.clear();
         redoStack.clear();
+        selectedIndices.clear ();
+        editingIndex = -1;
+        lastClickedIndex = -1;
+        lastClickTime =0;
         if (searchBox)
             searchBox->setTxt( "Search...");
     }
@@ -825,7 +960,7 @@ private:
         file << joinStrings(activeComps) << "\n";
         file << placedComponents. size() << "\n";
         for (const auto& pc : placedComponents) {
-            file << pc.name << " " << pc.x << " " << pc.y << "\n";
+            file << pc.name << "|" << pc.x << "|" << pc.y << "|"<< pc.angle << "|" << pc.flipH << "|" << pc.flipV << "|" << pc.label << "|" << pc.value << "\n";
         }
         file.close();
     }
@@ -850,14 +985,27 @@ private:
         if (file >> count) {
             file.ignore();
             for (int i = 0; i < count; ++i) {
-                string cname; int cx, cy;
-                if (file >> cname >> cx >> cy) {
-                    placedComponents.push_back({cname, cx, cy});
-                }
+                if (!getline(file, line) ) break;
+                stringstream ss (line);
+                string token;
+                placedComp pc;
+                if ( getline(ss, token, '|')) pc.name = token;
+                if ( getline(ss, token, '|')) pc.x = stoi(token);
+                if ( getline(ss, token, '|')) pc.y = stoi(token);
+                if ( getline(ss, token, '|')) pc.angle = stoi(token );
+                if ( getline(ss, token, '|')) pc.flipH = (token == "1");
+                if ( getline(ss, token, '|')) pc.flipV = (token == "1");
+                if ( getline(ss, token, '|')) pc.label =token;
+                if ( getline(ss, token, '|')) pc.value =token;
+                placedComponents.push_back(pc);
             }
         }
         file.close();
-        return true;
+        selectedIndices.clear();
+        editingIndex = -1;
+        lastClickedIndex = -1;
+        lastClickTime = 0;
+        return true ;
     }
 
 public:
@@ -903,6 +1051,16 @@ public:
         showProp = false;
         activeCompsY = 0;
         currentProjectPath = "";
+        draggingComponents =false;
+        drawingSelection = false;
+        selectionRect = {0,0,0,0};
+        propLabelInput = nullptr;
+        propValueInput = nullptr;
+        btnPropOK =nullptr;
+        btnPropCancel = nullptr;
+        editingIndex = -1;
+        lastClickedIndex = -1;
+        lastClickTime = 0;
 
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
         for (size_t i=0; i<libItms.size(); i++) {
@@ -937,6 +1095,10 @@ public:
         delete btnNameCancel;
         delete btnBack;
         delete searchBox;
+        delete propLabelInput ;
+        delete propValueInput;
+        delete btnPropOK;
+        delete btnPropCancel;
         if (libFont)
             TTF_CloseFont(libFont);
         for (auto btn :btnRecents)
@@ -1017,6 +1179,9 @@ public:
                     winW = ev.window.data1;
                     winH = ev.window.data2;
                 }
+                else if (ev.window.event == SDL_WINDOWEVENT_RESTORED ||ev.window.event == SDL_WINDOWEVENT_MAXIMIZED){
+                    SDL_GetWindowSize (window, &winW, &winH);
+                }
             }
             if (ev.type == SDL_MOUSEMOTION) {
                 SDL_GetMouseState(&mseX , &mseY);
@@ -1064,6 +1229,9 @@ public:
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
                             resetView();
                             resetLibExpanded();
+                            selLibItm = "";
+                            currentTool = Tool::SELECT;
+                            SDL_FlushEvent( SDL_MOUSEBUTTONDOWN );
                             currentState = app::WORKSPACE;
                             cout << "Opened project: " << chosen << endl;
                         } else {
@@ -1092,6 +1260,9 @@ public:
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
                             resetView();
                             resetLibExpanded ();
+                            selLibItm = "";
+                            currentTool = Tool::SELECT;
+                            SDL_FlushEvent (SDL_MOUSEBUTTONDOWN);
                             currentState = app::WORKSPACE;
                         }
                     }
@@ -1207,7 +1378,12 @@ public:
                     placedComponents.clear();
                     undoStack.clear() ;
                     redoStack.clear();
+                    selectedIndices.clear();
+                    editingIndex =-1;
+                    lastClickedIndex = -1;
+                    lastClickTime = 0;
                     addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
+                    saveProjectToFile (path);
                     currentProjectPath = path;
                     if (txtProjectName)
                         txtProjectName->setActive(false);
@@ -1216,6 +1392,9 @@ public:
                     SDL_SetWindowPosition (window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
                     resetView();
                     resetLibExpanded();
+                    selLibItm = "";
+                    currentTool =Tool::SELECT;
+                    SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
                     currentState = app::WORKSPACE;
                     cout << "New project created: " << finalName <<" Canvas: " << canvasWidth << "x" << canvasHeight << endl;
                 }
@@ -1229,11 +1408,11 @@ public:
                 btnBack->events(ev);
                 if (btnBack->click(ev) ) {
                     currentState = app::STARTUP_MENU;
-                    SDL_SetWindowMinimumSize( window, 850, 600);
-                    SDL_SetWindowMaximumSize( window, 850, 600);
-                    SDL_SetWindowSize(window, 850, 600);
-                    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+                    SDL_SetWindowMinimumSize ( window, 0, 0);
+                    SDL_SetWindowMaximumSize ( window, 0, 0);
                     selLibItm = "";
+                    currentTool = Tool::SELECT;
+                    selectedIndices. clear();
                 }
 
                 for (auto b : tlbrBtns) b->events(ev);
@@ -1260,6 +1439,7 @@ public:
                 }
                 else if (tlbrBtns [3]->click(ev)) {
                     showProp = !showProp;
+                    if (!showProp) editingIndex = -1;
                     cout << "Properties panel toggled\n";
                 }
                 else if (tlbrBtns[4]->click(ev)){
@@ -1277,6 +1457,9 @@ public:
                             currentProjectPath = chosen;
                             resetView();
                             resetLibExpanded();
+                            selLibItm = "" ;
+                            currentTool = Tool::SELECT;
+                            SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
                             currentState = app::WORKSPACE;
                             cout << "Loaded: " << chosen << endl;
                         }
@@ -1293,11 +1476,14 @@ public:
                 }
 
                 if (showLib) {
-                    searchBox-> handleEvent(ev);
-                    if (searchBox->isActive())
-                        searchFilter = searchBox->gTxt();
-                    if (!searchBox->isActive() && searchBox->gTxt().empty())
-                        searchBox->setTxt("Search...");
+                    bool propsActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive());
+                    if (!propsActive){
+                        searchBox->handleEvent(ev);
+                        if(searchBox->isActive())
+                            searchFilter = searchBox->gTxt();
+                        if (!searchBox->isActive() && searchBox->gTxt().empty())
+                            searchBox->setTxt("Search...");
+                    }
                 }
 
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_l && SDL_GetModState() & KMOD_CTRL) {
@@ -1313,11 +1499,15 @@ public:
                 }
 
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+                    bool ctrlHeld = SDL_GetModState() &KMOD_CTRL;
                     if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
                         if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
-                    } else {
+                        if (propLabelInput) propLabelInput->setActive(false);
+                        if (propValueInput) propValueInput->setActive(false);
+                    }
+                    else {
                         if (searchBox && searchBox->isActive()) {
                             searchBox->setActive(false);
                             if (searchBox->gTxt(). empty())
@@ -1339,7 +1529,8 @@ public:
                                 act.activeIndex = index;
                                 pushUndo(act);
                                 activeComps.erase(activeComps.begin() + index);
-                            } else if (mseX >= r.x && mseX<= r.x + r.w && mseY >= r.y && mseY <= r.y + r.h) {
+                            }
+                            else if (mseX >= r.x && mseX<= r.x + r.w && mseY >= r.y && mseY <= r.y + r.h) {
                                 selLibItm = activeComps [index];
                                 currentTool = Tool::COMPONENT;
                             }
@@ -1407,26 +1598,157 @@ public:
                         selLibItm = "";
                     }
                     else if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
-                        if (!btnBack-> click(ev)) {
-                            if (currentTool == Tool::COMPONENT && !selLibItm.empty()) {
+                        if (propLabelInput) propLabelInput->setActive(false);
+                        if (propValueInput) propValueInput->setActive(false);
+                        if (!btnBack-> click (ev)) {
+                            if (ctrlHeld){
+                                drawingSelection = false;
+                                isPan = true ;
+                                panStartX = ev.button.x ; panStartY = ev.button.y;
+                                panOffXst = panX; panOffYst = panY;
+                            }
+                            else if (currentTool == Tool::COMPONENT && !selLibItm.empty()){
                                 int wx = snapToGrid(scrToWldX(mseX));
                                 int wy = snapToGrid(scrToWldY(mseY));
-                                placedComp pc ={selLibItm, wx, wy};
+                                placedComp pc ={selLibItm, wx, wy, 0, false, false, "", ""} ;
                                 placedComponents.push_back(pc);
                                 UndoAction act;
                                 act.type = COMP_PLACE;
                                 act.comp = pc ;
                                 pushUndo(act);
                             } else {
-                                isPan = true ;
-                                panStartX = ev.button.x ; panStartY = ev.button.y;
-                                panOffXst = panX; panOffYst = panY;
+                                bool hitComponent =false;
+                                for (size_t i = 0; i < placedComponents.size(); ++i) {
+                                    int sx = wldToScrX (placedComponents[i].x);
+                                    int sy = wldToScrY( placedComponents[i].y);
+                                    SDL_Rect compRect = { sx - 40, sy - 20, 80, 40};
+                                    if (mseX >= compRect.x && mseX < compRect.x +compRect.w && mseY >= compRect.y && mseY < compRect.y +compRect.h) {
+                                        Uint32 now = SDL_GetTicks();
+                                        if (lastClickedIndex == i && (now - lastClickTime) < 400) {
+                                            editingIndex = i;
+                                            showProp = true;
+                                            if (!propLabelInput){
+                                                propLabelInput = new txtIn(renderer, font, 0, 0, 100, 25, false);
+                                                propValueInput = new txtIn (renderer, font, 0, 0, 100, 25, false);
+                                                btnPropOK = new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255,255,255,255}, {240,240,240,255}, "Apply");
+                                                btnPropCancel =  new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255,255,255,255}, {240,240,240,255}, "Cancel");
+                                            }
+                                            propLabelInput->setTxt(placedComponents[i].label);
+                                            propValueInput-> setTxt(placedComponents[i].value);
+                                            propLabelInput->setActive(true);
+                                            propValueInput->setActive(false);
+                                            if (searchBox && searchBox->isActive()){
+                                                searchBox->setActive(false);
+                                                searchBox->setTxt ("Search...");
+                                            }
+                                            selectedIndices.clear();
+                                            selectedIndices.push_back (i);
+                                            lastClickedIndex = -1;
+                                            lastClickTime = 0;
+                                            hitComponent = true;
+                                            break;
+                                        }
+                                        lastClickedIndex =i;
+                                        lastClickTime = now;
+                                        bool alreadySelected = find(selectedIndices.begin(),selectedIndices.end(),i) != selectedIndices.end();
+                                        if (SDL_GetModState() & KMOD_SHIFT){
+                                            auto it = find (selectedIndices.begin(), selectedIndices.end(), i);
+                                            if (it != selectedIndices.end()) {
+                                                selectedIndices.erase(it);
+                                                hitComponent = true ;
+                                                break;
+                                            }
+                                            else {
+                                                selectedIndices.push_back(i);
+                                                alreadySelected =true;
+                                            }
+                                        }
+                                        else {
+                                            if (!alreadySelected){
+                                                selectedIndices.clear ();
+                                                selectedIndices.push_back(i);
+                                                alreadySelected = true;
+                                            }
+                                        }
+                                        if (alreadySelected) {
+                                            draggingComponents = true;
+                                            dragStartX =mseX;
+                                            dragStartY =mseY;
+                                            dragSnapshots.clear();
+                                            for (auto idx :selectedIndices) {
+                                                dragSnapshots.push_back(placedComponents[idx]);
+                                            }
+                                        }
+                                        hitComponent = true;
+                                        break ;
+                                    }
+                                }
+                                if (!hitComponent){
+                                    if (!(SDL_GetModState() & KMOD_SHIFT)) {
+                                        selectedIndices.clear() ;
+                                    }
+                                    drawingSelection = true;
+                                    selectionRect = {mseX, mseY, 0, 0} ;
+                                    lastClickedIndex = -1;
+                                    lastClickTime = 0;
+                                }
                             }
                         }
                         selLibItm ="";
                     }
+                    else if (showProp && editingIndex < placedComponents.size()) {
+                        if (propLabelInput && propLabelInput->mouseIn(mseX, mseY) ) {
+                            propLabelInput->setActive (true);
+                            propValueInput->setActive(false);
+                            if (searchBox && searchBox->isActive()) {
+                                searchBox->setActive(false);
+                                searchBox->setTxt( "Search...");
+                            }
+                        }
+                        else if (propValueInput &&   propValueInput->mouseIn(mseX, mseY)) {
+                            propValueInput-> setActive(true);
+                            propLabelInput-> setActive(false);
+                            if (searchBox && searchBox->isActive()) {
+                                searchBox-> setActive(false);
+                                searchBox-> setTxt("Search...");
+                            }
+                        }
+                        else {
+                            if (propLabelInput) propLabelInput->setActive(false);
+                            if (propValueInput)  propValueInput->setActive(false);
+                        }
+                        if (btnPropOK && btnPropOK->click(ev)){
+                            if (editingIndex <placedComponents.size()) {
+                                UndoAction act;
+                                act.type =COMP_EDIT;
+                                act.oldComp = placedComponents [editingIndex];
+                                placedComponents[editingIndex].label = propLabelInput->gTxt();
+                                placedComponents[editingIndex].value = propValueInput->gTxt();
+                                act.comp = placedComponents[editingIndex];
+                                pushUndo (act);
+                            }
+                            editingIndex = -1;
+                            showProp = false;
+                            if (propLabelInput) propLabelInput->setActive(false);
+                            if (propValueInput) propValueInput->setActive(false);
+                        }
+                        else if (btnPropCancel && btnPropCancel->click(ev) ) {
+                            editingIndex = -1;
+                            showProp = false;
+                            if (propLabelInput) propLabelInput->setActive (false);
+                            if (propValueInput) propValueInput->setActive (false);
+                        }
+                    }
                 }
-                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_RIGHT) {
+                else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_MIDDLE) {
+                    if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
+                        drawingSelection = false;
+                        isPan = true ;
+                        panStartX = ev.button.x ; panStartY = ev.button.y;
+                        panOffXst = panX; panOffYst = panY;
+                    }
+                }
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_RIGHT) {
                     if (mseX >= vpX && mseX < vpX + vpW && mseY >= vpY && mseY < vpY +vpH) {
                         for (size_t i = 0; i < placedComponents.size(); ++i) {
                             int sx = wldToScrX(placedComponents[i].x);
@@ -1439,6 +1761,8 @@ public:
                                 act.comp = placedComponents[i];
                                 pushUndo(act);
                                 placedComponents.erase (placedComponents.begin() + i);
+                                selectedIndices.clear();
+                                if (editingIndex == i) editingIndex= -1;
                                 break;
                             }
                         }
@@ -1446,11 +1770,56 @@ public:
                 }
 
                 if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
-                    isPan = false;
+                    if (draggingComponents){
+                        if (dragStartX != mseX ||dragStartY != mseY){
+                            UndoAction act;
+                            act.type = COMP_MOVE;
+                            act.compsBefore= dragSnapshots;
+                            act.compsAfter = placedComponents;
+                            pushUndo(act);
+                        }
+                        draggingComponents = false;
+                    }
+                    if (drawingSelection){
+                        drawingSelection = false;
+                        if (selectionRect.w > 0 &&selectionRect.h > 0) {
+                            SDL_Rect sr= selectionRect;
+                            for (size_t i = 0; i < placedComponents.size(); ++i){
+                                int sx = wldToScrX(placedComponents[i].x);
+                                int sy = wldToScrY(placedComponents[i].y);
+                                if (sx >= sr.x && sx <= sr.x + sr.w && sy >= sr.y && sy<= sr.y + sr.h) {
+                                    if (find(selectedIndices.begin(), selectedIndices.end(), i) == selectedIndices.end())
+                                        selectedIndices.push_back(i);
+                                }
+                            }
+                        }
+                        selectionRect = {0,0,0,0};
+                    }
+                    isPan =false;
                 }
-                if (isPan && ev.type == SDL_MOUSEMOTION) {
+                else if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_MIDDLE){
+                    if (isPan) isPan = false;
+                }
+                if (isPan && ev.type== SDL_MOUSEMOTION) {
                     panX = panOffXst + (ev.motion.x- panStartX);
                     panY = panOffYst + (ev.motion.y- panStartY);
+                }
+                else if (ev.type == SDL_MOUSEMOTION) {
+                    if (draggingComponents && (ev.motion.state & SDL_BUTTON_LMASK)) {
+                        int deltaWX = scrToWldX(mseX) - scrToWldX(dragStartX);
+                        int deltaWY = scrToWldY(mseY) -scrToWldY(dragStartY);
+                        for (size_t j = 0; j < selectedIndices.size(); ++j) {
+                            size_t idx = selectedIndices [j];
+                            placedComponents[idx].x = snapToGrid(dragSnapshots[j].x+ deltaWX);
+                            placedComponents[idx].y = snapToGrid(dragSnapshots[j].y+ deltaWY);
+                        }
+                    } else if (drawingSelection){
+                        int x = min(mseX, selectionRect.x);
+                        int y = min(mseY, selectionRect.y);
+                        int w = abs(mseX - selectionRect.x) ;
+                        int h = abs(mseY - selectionRect.y);
+                        selectionRect = {x, y, w, h};
+                    }
                 }
                 if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY >=vpY && mseY<vpY+vpH){
                     int mx = mseX, my = mseY;
@@ -1467,50 +1836,19 @@ public:
                     panY = (my - vpY) - (int)(((my - vpY) - panY) *(zmLvl / oldZm));
                 }
 
+                if (showProp && editingIndex < placedComponents.size( )) {
+                    propLabelInput->handleEvent(ev);
+                    propValueInput->handleEvent(ev);
+                    btnPropOK->events(ev);
+                    btnPropCancel->events(ev);
+                }
+
                 if (ev.type == SDL_KEYDOWN) {
-                    if (ev.key.keysym.sym == SDLK_1) {
-                        currentTool = Tool::SELECT;
-                        cout << "Select tool (keyboard)\n";
-                        selLibItm = "";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_2) {
-                        currentTool = Tool::WIRE;
-                        cout << "Wire tool (keyboard)\n";
-                        selLibItm = "";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_3) {
-                        showLib =true;
-                        currentTool = Tool::COMPONENT;
-                        searchBox->setTxt("Search...");
-                        searchFilter = "";
-                        cout <<"Component Library (keyboard)\n";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_4) {
-                        showProp =!showProp;
-                        cout << "Properties panel toggled\n";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_DELETE) {
-                        cout << "Delete selected item (placeholder)\n";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
-                        float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
-                        int cx = vpW/2 ,cy = vpH/2;
-                        panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
-                        panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
-                    }
-                    else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS){
-                        float oldZm = zmLvl; zmLvl/= 1.1f;
-                        if (zmLvl < 0.2f)
-                            zmLvl = 0.2f;
-                        int cx = vpW/2 , cy = vpH/2;
-                        panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
-                        panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
-                    }
-                    else if (ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL) {
-                        resetView ();
-                        selLibItm = "";
-                    }
-                    else if (ev.key.keysym.sym == SDLK_s && SDL_GetModState() & KMOD_CTRL) {
+                    bool textFieldActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive()) ||(searchBox && searchBox->isActive());
+
+                    if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { undo();}
+                    else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { redo(); }
+                    else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL)) {
                         if (!currentProjectPath.empty()) {
                             saveProjectToFile(currentProjectPath) ;
                             addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
@@ -1518,26 +1856,97 @@ public:
                         }
                         selLibItm = "" ;
                     }
-                    else if (ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL) {
+                    else if (ev.key.keysym.sym == SDLK_o && (SDL_GetModState() & KMOD_CTRL)) {
                         string chosen = fileDialog();
                         if (!chosen.empty()) {
                             if (loadProjectFromFile(chosen)) {
                                 currentProjectPath = chosen;
                                 resetView();
                                 resetLibExpanded();
+                                selLibItm = "";
+                                currentTool =Tool::SELECT;
+                                SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
                                 currentState = app::WORKSPACE;
                                 cout << "Loaded: " << chosen << endl;
                             }
                         }
                         selLibItm = "";
                     }
-                    else if (ev.key.keysym.sym == SDLK_z && SDL_GetModState()  & KMOD_CTRL) {
-                        undo ();
-                        cout << "Undo (Ctrl+Z)\n";
+                    else if (ev.key.keysym.sym == SDLK_0 && (SDL_GetModState() & KMOD_CTRL)){
+                        resetView ();
+                        selLibItm = "";
                     }
-                    else if (ev.key.keysym.sym == SDLK_y && SDL_GetModState() & KMOD_CTRL) {
-                        redo();
-                        cout << "Redo (Ctrl+Y)\n";
+                    else if (!textFieldActive) {
+                        if (ev.key.keysym.sym == SDLK_1) {
+                            currentTool = Tool::SELECT;
+                            cout << "Select tool (keyboard)\n";
+                            selLibItm = "";
+                        }
+                        else if (ev.key.keysym.sym == SDLK_2) {
+                            currentTool = Tool::WIRE;
+                            cout << "Wire tool (keyboard)\n";
+                            selLibItm = "";
+                        }
+                        else if (ev.key.keysym.sym == SDLK_3) {
+                            showLib =true;
+                            currentTool = Tool::COMPONENT;
+                            searchBox->setTxt("Search...");
+                            searchFilter = "";
+                            cout <<"Component Library (keyboard)\n";
+                        }
+                        else if (ev.key.keysym.sym == SDLK_4) {
+                            showProp =!showProp;
+                            cout << "Properties panel toggled\n";
+                        }
+                        else if (ev.key.keysym.sym == SDLK_DELETE) {
+                            for (auto it = selectedIndices.rbegin(); it != selectedIndices.rend() ; ++it) {
+                                size_t i = *it;
+                                if (i < placedComponents.size()) {
+                                    UndoAction act;
+                                    act.type = COMP_DELETE;
+                                    act.comp = placedComponents [i];
+                                    pushUndo(act);
+                                    placedComponents.erase(placedComponents.begin() + i);
+                                    if (editingIndex == i) editingIndex = -1;
+                                }
+                            }
+                            selectedIndices.clear();
+                        }
+                        else if(ev.key.keysym.sym == SDLK_r) {
+                            for (size_t idx : selectedIndices){
+                                placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
+                            }
+                        }
+                        else if (ev.key.keysym.sym== SDLK_h){
+                            for (size_t idx: selectedIndices) {
+                                placedComponents[idx].flipH = !placedComponents[idx].flipH;
+                            }
+                        }
+                        else if(ev.key.keysym.sym == SDLK_v) {
+                            for (size_t idx : selectedIndices) {
+                                placedComponents[idx].flipV = !placedComponents[idx].flipV;
+                            }
+                        }
+                        else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
+                            float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
+                            int cx = vpW/2 ,cy = vpH/2;
+                            panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
+                            panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
+                        }
+                        else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS){
+                            float oldZm = zmLvl; zmLvl/= 1.1f;
+                            if (zmLvl < 0.2f)
+                                zmLvl = 0.2f;
+                            int cx = vpW/2 , cy = vpH/2;
+                            panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
+                            panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
+                        }
+                        else if(ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL){
+                        }
+                        else if(ev.key.keysym.sym == SDLK_s && SDL_GetModState() & KMOD_CTRL) {
+                        }
+                        else if(ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL){
+                        }
                     }
                 }
             }
@@ -1680,7 +2089,8 @@ public:
 
                 if (!selLibItm.empty( )) {
                     previewRect = {5, yOff+5, pnlLW-10, 60};
-                    drawCompPreview(selLibItm, previewRect);
+                    placedComp dummy= {selLibItm,0,0,0,false,false,"",""};
+                    drawCompPreview (selLibItm, previewRect, dummy);
                     yOff += 70;
                 }
 
@@ -1709,31 +2119,67 @@ public:
             }
 
             if (showProp){
-                SDL_Rect propBg = {winW - pnlRW, tlbrH, pnlRW , vpH};
+                int px = winW -pnlRW;
+                SDL_Rect propBg = {px, tlbrH, pnlRW , vpH};
                 SDL_SetRenderDrawColor(renderer, 225,230,240,255); SDL_RenderFillRect(renderer, &propBg);
                 SDL_SetRenderDrawColor(renderer, 170,170,180,255);
-                SDL_RenderDrawLine (renderer, winW - pnlRW, tlbrH, winW - pnlRW, tlbrH+vpH);
+                SDL_RenderDrawLine (renderer, px, tlbrH, px, tlbrH + vpH);
                 int propTitleW, propTitleH;
                 TTF_SizeText(font, "Properties", &propTitleW, &propTitleH);
-                int propTitleX = winW - pnlRW +(pnlRW - propTitleW)/2;
+                int propTitleX = px +(pnlRW - propTitleW) /2;
                 drawTxt("Properties", propTitleX, tlbrH+5, {0,0,0,255});
-                if (!selLibItm.empty()) {
+
+                if (editingIndex < placedComponents.size() && propLabelInput && propValueInput && btnPropOK && btnPropCancel){
+                    propLabelInput->setBox (px + 10, tlbrH + 90, pnlRW - 20, 25);
+                    propValueInput->setBox(px + 10, tlbrH + 160, pnlRW - 20, 25);
+                    btnPropOK->setRect(px + 10, tlbrH + 250, 60, 25);
+                    btnPropCancel->setRect(px+ 75, tlbrH + 250, 60, 25);
+
+                    propLabelInput->draw(renderer);
+                    propValueInput->draw(renderer);
+                    btnPropOK->draw (renderer);
+                    btnPropCancel->draw(renderer);
+
+                    drawTxt("Label", px+10, tlbrH+70 , {0,0,0,255}, libFont);
+                    drawTxt("Value", px+10, tlbrH+140, {0,0,0,255}, libFont);
+                } else if (!selLibItm.empty()) {
                     int itemW, itemH;
                     TTF_SizeText(font, selLibItm.c_str(), &itemW, &itemH);
-                    int itemX = winW - pnlRW + (pnlRW - itemW)/2;
+                    int itemX = px + (pnlRW - itemW)/ 2;
                     drawTxt(selLibItm, itemX, tlbrH +45, {0,0,0,255});
                 }
             }
 
             drawGrid();
-            for (const auto& pc : placedComponents) {
+            for (size_t i = 0; i < placedComponents.size(); ++i) {
+                const auto& pc =placedComponents[i];
                 int sx = wldToScrX(pc.x);
                 int sy = wldToScrY(pc.y);
                 SDL_Rect compRect = {sx- 40, sy - 20, 80, 40};
-                drawCompPreview (pc.name, compRect, false);
+                bool isSelected = find(selectedIndices.begin() , selectedIndices.end(), i) != selectedIndices.end();
+                if (isSelected) {
+                    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 80);
+                    SDL_RenderFillRect(renderer, &compRect );
+                    SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+                    SDL_RenderDrawRect(renderer, &compRect);
+                }
+                drawCompPreview (pc.name, compRect, pc, false) ;
                 SDL_SetRenderDrawColor(renderer, 0, 0, 0, 80);
                 SDL_RenderDrawRect(renderer, &compRect);
+                if (!pc.label.empty()) {
+                    drawTxt(pc.label, sx - 30, sy + 20, {0,0,0,255}, libFont );
+                }
             }
+
+            if (drawingSelection && selectionRect.w > 0 && selectionRect.h > 0) {
+                SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(renderer, 0, 120, 215, 30);
+                SDL_RenderFillRect (renderer, &selectionRect);
+                SDL_SetRenderDrawColor(renderer, 0, 120, 215, 80);
+                SDL_RenderDrawRect(renderer, &selectionRect);
+                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+            }
+
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
         }
