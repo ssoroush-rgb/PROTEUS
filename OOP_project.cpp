@@ -2794,6 +2794,7 @@ public:
                 }
             }
 
+
             if (drawingSelection && selectionRect.w > 0 && selectionRect.h > 0) {
                 SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
                 SDL_SetRenderDrawColor(renderer, 0, 120, 215, 30);
