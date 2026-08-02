@@ -17,14 +17,14 @@
 using namespace std;
 
 struct placedComp {
-    
-    string name;                 
-    int x, y;                    
-    int angle;                   
-    bool flipH,flipV;           
-    string label;                
-    string value;                
-};                              
+
+    string name;
+    int x, y;
+    int angle;
+    bool flipH,flipV;
+    string label;
+    string value;
+};
 
 struct project {
     string name;
@@ -109,8 +109,8 @@ public:
         active = a;
         if (active) {
             SDL_StartTextInput();
-        }                               
-    }                                   
+        }
+    }
 
     void handleEvent (const SDL_Event& e) {
         if ( !active)
@@ -202,7 +202,7 @@ public:
     }
 
     SDL_Rect gBox() const { return box; }
-    void setBox (int x, int y, int w, int h) { box = {x, y, w, h}; }      
+    void setBox (int x, int y, int w, int h) { box = {x, y, w, h}; }
 };
 
 
@@ -398,6 +398,8 @@ private:
     SDL_Rect selectionRect;
     bool drawingSelection;
 
+    bool mouseHandled;
+
     int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}
     int wldToScrY(int wy) const { return vpY + (int)(panY + (canvasHeight - wy) * zmLvl);}
     int scrToWldX(int sx) const { return (int)((sx - vpX - panX) / zmLvl); }
@@ -405,7 +407,34 @@ private:
 
     int snapToGrid (int val) const {return ((val + grdSz /2) / grdSz) * grdSz;}
 
-    enum UndoType {COMP_PLACE, COMP_DELETE, COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT};
+    void clampToCanvas (int& x, int& y) const {
+        if (x < 0) x= 0;
+        if (x > canvasWidth) x = canvasWidth;
+        if (y < 0) y= 0;
+        if (y > canvasHeight) y =canvasHeight;
+    }
+
+    void updateViewport (){
+        int leftPanelWidth = showLib ? pnlLW :0;
+        int rightPanelWidth = showProp ? pnlRW :0;
+        vpX = leftPanelWidth;
+        vpW = winW -leftPanelWidth - rightPanelWidth;
+        vpY = tlbrH;
+        vpH = winH - tlbrH - statH;
+    }
+
+    void fitWindowToCanvas() {
+        int newW = canvasWidth + (showLib? pnlLW : 0) + (showProp ? pnlRW : 0);
+        int newH  = canvasHeight + tlbrH + statH;
+        if (newW < 400) newW = 400 ;
+        if (newH < 300) newH = 300 ;
+        SDL_SetWindowSize(window, newW, newH);
+        winW = newW;winH = newH;
+        SDL_SetWindowPosition (window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        updateViewport();
+    }
+
+    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM};
     struct UndoAction{
         UndoType type;
         placedComp comp;
@@ -469,11 +498,12 @@ private:
             }
         }
         else if (act.type == COMP_MOVE){
-            placedComponents = act.compsAfter;
-            UndoAction redoAct = act;
-            redoAct.compsAfter = placedComponents;
-            redoAct.compsBefore = act. compsAfter;
-            redoStack.push_back(redoAct);
+            placedComponents = act.compsBefore;
+            redoStack.push_back(act);
+        }
+        else if (act.type == COMP_TRANSFORM) {
+            placedComponents = act.compsBefore;
+            redoStack.push_back (act);
         }
         else if (act.type == COMP_EDIT) {
             size_t idx = -1;
@@ -531,10 +561,14 @@ private:
             }
         }
         else if (act.type ==COMP_MOVE) {
-            placedComponents = act.compsAfter;
-            undoStack.push_back(act);
+            placedComponents = act.compsAfter; 
+            undoStack.push_back(act); 
         }
-        else if (act.type == COMP_EDIT) {
+        else if (act.type == COMP_TRANSFORM ) { 
+            placedComponents = act.compsAfter; 
+            undoStack.push_back(act); 
+        } 
+        else if (act.type ==  COMP_EDIT) {
             size_t idx =-1;
             for (size_t i = 0; i < placedComponents.size();++i) {
                 if (placedComponents[i].name == act.oldComp.name && placedComponents[i] .x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
@@ -630,6 +664,80 @@ private:
             SDL_FreeSurface (surf);
             SDL_DestroyTexture(tex);
         }
+    }
+
+    vector <SDL_Point> gCompPinPos(const placedComp& comp) const {
+        vector<SDL_Point> pins;
+        auto transform = [&] (int lx, int ly) -> pair<int,int> {
+            int sx = comp.flipH ? -1 : 1;
+            int sy = comp.flipV ? -1 : 1;
+            int rx = lx *sx;
+            int ry = ly * sy;
+            float rad = comp.angle * 3.14159f / 180.0f;
+            float s = std::sin (rad), c = std::cos(rad);
+            int fx = (int)(rx * c -ry * s);
+            int fy = (int)(rx * s +ry * c);
+            return {comp.x + fx, comp.y + fy};
+        };
+        if (comp.name == "Resistor") {
+            auto p1 = transform(-32, 0);  auto p2 = transform(32, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name == "Capacitor") {
+            auto p1 = transform(0, -18); auto p2 = transform(0, 18);
+            pins.push_back ({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name =="Inductor") {
+            auto p1 = transform(-27, 0); auto p2 = transform(27, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name == "LED") {
+            auto p1 = transform(0, -12); auto p2 = transform(0, 12);
+            pins.push_back({p1.first, p1.second});pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name == "Transistor" || comp.name == "NPN"|| comp.name == "PNP") {
+            auto p1 = transform(0, -14); auto p2 = transform(0, 14); auto p3= transform(-12, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second}); pins.push_back({p3.first, p3.second});
+        }
+        else if (comp.name == "Ground") {
+            auto p1 = transform(0, - 12);
+            pins.push_back({p1.first, p1.second});
+        }
+        else if (comp.name == "VCC") {
+            auto p1 = transform(0, -14);
+            pins.push_back({p1. first, p1.second});
+        }
+        else if (comp.name == "Battery") {
+            auto p1  = transform(0, -14); auto p2 = transform(0, 14);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name == "AND Gate"){
+            auto p1 = transform(-26, -8); auto p2 = transform(-26, 8); auto p3 = transform(18, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back( {p2.first, p2.second}); pins.push_back({p3.first, p3.second});
+        }
+        else if(comp.name == "OR Gate") {
+            auto p1 = transform( -22, -8); auto p2 = transform(-22, 8); auto p3 = transform(18, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second}); pins.push_back({p3.first, p3.second});
+        }
+        else if (comp.name == "NOT Gate" ) {
+            auto p1 = transform(-18, 0); auto p2 = transform(22, 0);
+            pins.push_back({p1.first, p1.second}) ; pins.push_back({p2.first, p2.second});
+        }
+        else if (comp.name == "7-Segment"){
+            auto p1 = transform(-16, -10); auto p2 = transform(-16, -2);
+            auto p3 = transform(-16, 6);  auto p4 = transform(-16, 14);
+            auto p5 = transform(16, -10); auto p6 = transform(16, -2);
+            auto p7 = transform(16, 6);   auto p8 = transform (16, 14);
+            pins.push_back ({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+            pins.push_back({p3.first, p3.second}); pins.push_back({p4.first, p4.second});
+            pins.push_back({p5.first, p5.second}); pins.push_back({p6.first, p6.second});
+            pins.push_back({p7.first, p7.second}); pins.push_back({p8.first, p8.second});
+        }
+        else {
+            auto p1 = transform(-15 , 0); auto p2 = transform(15, 0);
+            pins.push_back({p1.first, p1.second}); pins.push_back({p2.first, p2.second});
+        }
+        return pins;
     }
 
     void drawCompPreview(const string& compName, SDL_Rect area,const placedComp& comp, bool drawBg = true){
@@ -728,19 +836,46 @@ private:
             p2 = transform(cx+6, cy+2);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
-        else if (compName == "Transistor" || compName == "NPN" || compName == "PNP") {
+        else if (compName ==  "Transistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-            auto p1 = transform(cx, cy-10);
-            auto  p2 = transform(cx, cy+10);
+            auto p1= transform(cx, cy-10);
+            auto p2= transform(cx, cy+10);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-8, cy-4 );
             p2 = transform(cx+8, cy-8);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-8, cy+4);
-            p2 =transform(cx+8, cy+8);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            p2 = transform(cx+8, cy+8);
+            SDL_RenderDrawLine(renderer, p1.first,p1.second, p2.first, p2.second);
             SDL_Rect circle ={cx-12, cy-12, 24,24};
             SDL_RenderDrawRect(renderer, &circle);
+        }
+        else if (compName == "NPN"|| compName == "PNP") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            SDL_Rect circle = {cx-12, cy-12, 24, 24} ;
+            SDL_RenderDrawRect(renderer, &circle);
+
+            auto coll  = transform(cx, cy-12);
+            auto emit  = transform(cx, cy+12);
+            auto base  = transform(cx-12, cy);
+            auto center= transform(cx, cy);
+            SDL_RenderDrawLine(renderer, coll.first, coll.second, center.first, center.second);
+            SDL_RenderDrawLine(renderer, emit.first, emit.second, center.first, center.second);
+            SDL_RenderDrawLine(renderer, base.first, base.second, center.first, center.second);
+
+            vector<pair<int,int>> arrow;
+            if(compName == "NPN") {
+                arrow = {{0,8}, {-3,5}, {3,5}};
+            }
+            else {
+                arrow = {{0,-8},{-3,-5},{3,-5}};
+            }
+            auto tp  = transform(cx + arrow[0].first, cy + arrow[0].second);
+            auto ap1 = transform(cx + arrow[1].first, cy + arrow [1].second);
+            auto ap2 = transform(cx + arrow[2].first, cy + arrow[2].second);
+            SDL_RenderDrawLine(renderer, tp.first, tp.second, ap1.first, ap1.second);
+            SDL_RenderDrawLine(renderer, ap1.first, ap1.second, ap2.first, ap2.second);
+            SDL_RenderDrawLine (renderer, ap2.first, ap2.second, tp.first, tp.second);
         }
         else if (compName == "Ground" ) {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -757,14 +892,110 @@ private:
             p2 = transform(cx+3,cy+10);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
-        else if ( compName == "VCC" || compName == "Battery") {
-            SDL_SetRenderDrawColor( renderer, 200,0,0,255);
-            auto p1 = transform(cx, cy-10);
-            auto p2 = transform(cx, cy+5) ;
+        else if ( compName == "VCC") {
+            SDL_SetRenderDrawColor( renderer, 180,20,20,255);
+            auto p1 = transform(cx, cy-12);
+            auto p2 = transform(cx, cy+8) ;
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-            p1 = transform(cx-5, cy);
-            p2 =transform(cx+5, cy);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            auto p3 = transform (cx-5, cy+1);
+            auto p4 = transform(cx+5, cy+1);
+            SDL_RenderDrawLine(renderer , p3.first, p3.second, p4.first, p4.second);
+            auto p5 = transform(cx-3, cy-6);
+            auto p6 = transform(cx+3, cy-6);
+            SDL_RenderDrawLine(renderer, p5.first, p5.second, p6.first, p6.second);
+        }
+        else if (compName == "Battery"){
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = transform(cx, cy-12);
+            auto p2 = transform(cx, cy-4);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
+            auto p3 = transform(cx-4, cy-4);
+            auto p4 = transform(cx+4, cy-4);
+            SDL_RenderDrawLine(renderer, p3.first, p3.second , p4.first, p4.second);
+            auto p5 = transform(cx-8, cy+1);
+            auto p6 = transform(cx+8, cy+1);
+            SDL_RenderDrawLine (renderer, p5.first, p5.second, p6.first, p6.second);
+            auto p7 = transform(cx, cy+1);
+            auto p8 = transform(cx, cy+10);
+            SDL_RenderDrawLine(renderer, p7.first, p7.second, p8.first, p8.second);
+        }
+        else if (compName =="AND Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair <int,int>> points = {
+                {-20,-12}, {-20,12},{-20,-12}, {6,-12}, {-20,12}, {6,12}, {6,-12}, {10,-8}, {10,-8}, {12,-4},
+                {12,-4}, {12,4},{12,4}, {10,8}, {10,8}, {6,12}, {12,0},{18 ,0}, {-26,-8}, {-20,-8},
+                {-26,8}, {-20,8}
+            };
+            for (size_t i= 0; i < points.size(); i+=2) {
+                auto p1 = transform(cx + points[i].first, cy + points[i].second);
+                auto p2 = transform(cx + points[i+1].first, cy+ points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            }
+        }
+        else if(compName == "OR Gate") {
+            SDL_SetRenderDrawColor(renderer, 0 ,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {6,-12},{-12,12}, {6,12}, {-12,-12}, {-8,-10},{-8,-10}, {-6,-4}, {-6,-4}, {-6,4},
+                {-6,4}, {-8,10}, {-8,10}, {-12,12}, {6,-12}, {10,-8}, {10,-8}, {12,-4}, {12,-4}, {12,4},
+                {12,4}, {10,8},{10,8}, {6,12},{12,0}, {18,0},{-22,-8}, {-12,-8}, {-22,8}, {-12,8}
+            };
+            for (size_t i = 0; i < points.size(); i+=2) {
+                auto p1 = transform(cx + points[i].first, cy + points[i].second);
+                auto p2 = transform(cx + points[i+1].first, cy + points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first , p2.second);
+            }
+        }
+        else if(compName == "NOT Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector <pair<int,int>> points = {
+                {-12,-12}, {-12,12},{-12,-12}, {8,0}, {-12,12}, {8,0}, {-18,0}, {-12,0}
+            };
+            for (size_t i = 0; i < points.size(); i+=2) {
+                auto p1 = transform(cx + points[i].first, cy + points[i].second);
+                auto p2 = transform(cx + points [i+1].first, cy + points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            }
+
+            auto bubbleCenter = transform(cx + 12, cy);
+            int r =3;
+            for (int a = 0; a < 360; a += 30) {
+                float angle1 = a * 3.14159f / 180.0f;
+                float angle2 = (a + 30)* 3.14159f / 180.0f;
+                int x1 = bubbleCenter.first + (int)(r * cos(angle1));
+                int y1 = bubbleCenter.second + (int)(r * sin(angle1));
+                int x2 = bubbleCenter.first + (int)(r *  cos(angle2));
+                int y2 = bubbleCenter.second + (int)(r * sin(angle2));
+                SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+            }
+            auto pOut1 =transform(cx + 15, cy);
+            auto pOut2 =transform(cx + 22, cy);
+            SDL_RenderDrawLine(renderer, pOut1.first, pOut1.second , pOut2.first, pOut2.second);
+        }
+        else if (compName == "7-Segment") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto top    = transform(cx, cy-14);
+            auto topL   = transform(cx-12, cy-10);
+            auto topR   = transform(cx+12, cy-10);
+            auto mid    = transform(cx, cy);
+            auto botL   = transform(cx-12, cy+10);
+            auto botR   = transform(cx+12, cy+10);
+            auto bot    = transform(cx, cy+ 14);
+            auto upL1   = transform(cx-12, cy-10);
+            auto upL2   = transform(cx-12, cy-2);
+            auto upR1   = transform(cx+12, cy-10);
+            auto upR2   = transform(cx+12 , cy -2);
+            auto lowL1  = transform(cx-12, cy+2);
+            auto lowL2  = transform(cx-12, cy+10);
+            auto lowR1  = transform(cx+12, cy+2) ;
+            auto lowR2  = transform(cx+12, cy+10);
+
+            SDL_RenderDrawLine(renderer, topL.first, topL.second, topR.first, topR.second);
+            SDL_RenderDrawLine(renderer, upL1.first,upL1.second, upL2.first, upL2.second);
+            SDL_RenderDrawLine(renderer, upR1.first, upR1.second, upR2.first, upR2.second);
+            SDL_RenderDrawLine(renderer, mid.first-10, mid.second, mid.first+10, mid.second);
+            SDL_RenderDrawLine(renderer, lowL1.first, lowL1.second, lowL2.first, lowL2.second);
+            SDL_RenderDrawLine(renderer, lowR1.first, lowR1.second, lowR2.first, lowR2.second);
+            SDL_RenderDrawLine(renderer, botL.first, botL.second, botR.first , botR.second);
         }
         else {
             drawTxt(compName.substr(0,4), area.x+5, area.y+5, {0,0,0,255});
@@ -997,6 +1228,7 @@ private:
                 if ( getline(ss, token, '|')) pc.flipV = (token == "1");
                 if ( getline(ss, token, '|')) pc.label =token;
                 if ( getline(ss, token, '|')) pc.value =token;
+                clampToCanvas (pc.x, pc.y);
                 placedComponents.push_back(pc);
             }
         }
@@ -1061,6 +1293,7 @@ public:
         editingIndex = -1;
         lastClickedIndex = -1;
         lastClickTime = 0;
+        mouseHandled= false;
 
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
         for (size_t i=0; i<libItms.size(); i++) {
@@ -1224,6 +1457,7 @@ public:
                     if (!chosen.empty()) {
                         if (loadProjectFromFile (chosen)) {
                             currentProjectPath = chosen;
+                            fitWindowToCanvas() ;
                             SDL_SetWindowMinimumSize (window, 400, 300);
                             SDL_SetWindowMaximumSize (window, 0, 0);
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
@@ -1255,6 +1489,7 @@ public:
                                 placedComponents.clear();
                                 currentProjectPath = path;
                             }
+                            fitWindowToCanvas();
                             SDL_SetWindowMinimumSize(window, 400, 300);
                             SDL_SetWindowMaximumSize(window, 0, 0) ;
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
@@ -1292,6 +1527,8 @@ public:
                         btnCustomOK = new BUTTONS(renderer, font, 315, 390, 100, 40, {255,255, 255, 255}, {240, 240, 240, 255}, "OK");
                         btnCustomCancel= new BUTTONS(renderer, font, 435, 390,100, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
                     }
+                    txtWidth->setTxt("");
+                    txtHeight->setTxt("");
                     txtWidth->setActive(true); txtHeight->setActive(false);
                     currentState =app::CUSTOM_SIZE_DIALOG;
                 }
@@ -1387,6 +1624,7 @@ public:
                     currentProjectPath = path;
                     if (txtProjectName)
                         txtProjectName->setActive(false);
+                    fitWindowToCanvas ();
                     SDL_SetWindowMinimumSize(window, 400, 300);
                     SDL_SetWindowMaximumSize(window, 0, 0);
                     SDL_SetWindowPosition (window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
@@ -1405,6 +1643,10 @@ public:
                 }
             }
             else if (currentState == app::WORKSPACE){
+                updateViewport();
+
+                mouseHandled = false;
+
                 btnBack->events(ev);
                 if (btnBack->click(ev) ) {
                     currentState = app::STARTUP_MENU;
@@ -1413,18 +1655,21 @@ public:
                     selLibItm = "";
                     currentTool = Tool::SELECT;
                     selectedIndices. clear();
+                    mouseHandled =true;
                 }
 
                 for (auto b : tlbrBtns) b->events(ev);
-                if (tlbrBtns[0]->click(ev)) {
+                if (!mouseHandled && tlbrBtns[0]-> click(ev)) {
                     currentTool = Tool::SELECT; selLibItm = "";
+                    mouseHandled = true;
                     cout << "Select tool\n";
                 }
-                else if (tlbrBtns[1]->click(ev)) {
+                else if(!mouseHandled && tlbrBtns[1]->click(ev)) {
                     currentTool = Tool::WIRE; selLibItm = "";
+                    mouseHandled = true;
                     cout << "Wire tool\n";
                 }
-                else if (tlbrBtns[2]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns[2]->click(ev)){
                     showLib = !showLib;
                     if (showLib) {
                         currentTool =Tool::COMPONENT;
@@ -1435,26 +1680,32 @@ public:
                         currentTool = Tool::SELECT;
                         selLibItm = "";
                     }
+                    updateViewport() ;
+                    mouseHandled = true;
                     cout<< "Component Library toggled\n";
                 }
-                else if (tlbrBtns [3]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns [3]->click(ev)) {
                     showProp = !showProp;
                     if (!showProp) editingIndex = -1;
+                    updateViewport() ;
+                    mouseHandled = true;
                     cout << "Properties panel toggled\n";
                 }
-                else if (tlbrBtns[4]->click(ev)){
+                else if (!mouseHandled && tlbrBtns [4]->click(ev)){
                     if (!currentProjectPath.empty()) {
                         saveProjectToFile (currentProjectPath);
                         addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
                         cout << "Project saved.\n";
                     }
                     selLibItm = "";
+                    mouseHandled = true;
                 }
-                else if (tlbrBtns[5]->click(ev)) {
+                else if(!mouseHandled && tlbrBtns[5]->click(ev)) {
                     string chosen = fileDialog();
                     if (!chosen.empty ()) {
                         if (loadProjectFromFile(chosen)) {
                             currentProjectPath = chosen;
+                            fitWindowToCanvas();
                             resetView();
                             resetLibExpanded();
                             selLibItm = "" ;
@@ -1465,13 +1716,16 @@ public:
                         }
                     }
                     selLibItm = "";
+                    mouseHandled =true;
                 }
-                else if (tlbrBtns[6]->click (ev)) {
+                else if (!mouseHandled && tlbrBtns[6]->click (ev)) {
                     undo();
+                    mouseHandled = true;
                     cout << "Undo\n";
                 }
-                else if (tlbrBtns[7]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns[7]->click(ev)) {
                     redo();
+                    mouseHandled = true;
                     cout << "Redo \n";
                 }
 
@@ -1496,16 +1750,19 @@ public:
                         currentTool = Tool::SELECT ;
                         selLibItm = "";
                     }
+                    updateViewport();
                 }
 
-                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_LEFT && !mouseHandled) {
+                    bool canvasClickHandled = false;
                     bool ctrlHeld = SDL_GetModState() &KMOD_CTRL;
                     if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
                         if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
                         if (propLabelInput) propLabelInput->setActive(false);
-                        if (propValueInput) propValueInput->setActive(false);
+                        if (propValueInput ) propValueInput->setActive(false);
+                        canvasClickHandled = true;
                     }
                     else {
                         if (searchBox && searchBox->isActive()) {
@@ -1515,29 +1772,30 @@ public:
                         }
                     }
 
-                    if (showLib && activeCompsY > 0 && mseX >= 0 && mseX< pnlLW &&
+                    if (!canvasClickHandled && showLib && activeCompsY > 0 && mseX >= 0 && mseX< pnlLW &&
                         mseY >= activeCompsY && mseY < activeCompsY + (int)activeComps.size() * 26) {
                         int index = (mseY- activeCompsY) / 26;
-                        if (index >= 0 && index <(int)activeComps.size()) {
-                            SDL_Rect r = {5, activeCompsY + index * 26, pnlLW - 10, 20};
+                        if (index >= 0 && index <(int)activeComps.size()){
+                            SDL_Rect r =  {5, activeCompsY + index * 26, pnlLW - 10, 20};
                             SDL_Rect xRect = {r.x + r.w - 15, r.y + (r.h - 10)/2, 10, 10};
-                            if (mseX >= xRect.x && mseX  <= xRect.x + xRect.w &&
-                                mseY >= xRect.y && mseY <= xRect.y + xRect.h) {
+                            if (mseX >= xRect.x && mseX  <= xRect.x + xRect.w && mseY >= xRect. y && mseY <= xRect.y + xRect.h) {
                                 UndoAction  act;
                                 act.type = ACTIVE_REMOVE;
                                 act.compName = activeComps[index];
-                                act.activeIndex = index;
+                                act.activeIndex = index ;
                                 pushUndo(act);
                                 activeComps.erase(activeComps.begin() + index);
+                                canvasClickHandled = true;
                             }
-                            else if (mseX >= r.x && mseX<= r.x + r.w && mseY >= r.y && mseY <= r.y + r.h) {
+                            else if (mseX >= r.x && mseX<= r.x + r.w &&mseY >= r.y && mseY <= r.y + r.h) {
                                 selLibItm = activeComps [index];
-                                currentTool = Tool::COMPONENT;
+                                currentTool = Tool:: COMPONENT;
+                                canvasClickHandled = true;
                             }
                         }
                     }
 
-                    if (showLib && mseX >=0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
+                    if (!canvasClickHandled && showLib && mseX>=0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
                         string lowerFilter = toLower (searchFilter);
                         int yOff = tlbrH +45;
                         bool clickedOnComponent = false;
@@ -1561,6 +1819,7 @@ public:
                                                 }
                                             }
                                             clickedOnComponent = true;
+                                            canvasClickHandled= true;
                                             break;
                                         }
                                         yOff += 28;
@@ -1576,6 +1835,7 @@ public:
                                 SDL_Rect catRect = {5, yOff, pnlLW-10, 20};
                                 if (mseX >= catRect.x && mseX <= catRect.x + catRect.w && mseY >= catRect.y && mseY <= catRect.y+catRect.h) {
                                     cat.expanded = !cat.expanded;
+                                    canvasClickHandled = true;
                                     break;
                                 }
                                 yOff += 30;
@@ -1592,14 +1852,15 @@ public:
                             }
                         }
                     }
-                    else if (mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
-                        mseY >= zoomRct.y && mseY<=zoomRct.y + zoomRct.h) {
-                        resetView();
-                        selLibItm = "";
+                    else if ( !canvasClickHandled && mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
+                        mseY >= zoomRct.y && mseY<=zoomRct.y + zoomRct.h){
+                        resetView ();
+                        selLibItm =  "";
+                        canvasClickHandled = true;
                     }
-                    else if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
-                        if (propLabelInput) propLabelInput->setActive(false);
-                        if (propValueInput) propValueInput->setActive(false);
+                    else if (!canvasClickHandled && mseX >= vpX && mseX < vpX +vpW && mseY >= vpY && mseY < vpY+ vpH) {
+                        if (propLabelInput) propLabelInput->setActive (false);
+                        if (propValueInput) propValueInput->setActive (false);
                         if (!btnBack-> click (ev)) {
                             if (ctrlHeld){
                                 drawingSelection = false;
@@ -1610,6 +1871,7 @@ public:
                             else if (currentTool == Tool::COMPONENT && !selLibItm.empty()){
                                 int wx = snapToGrid(scrToWldX(mseX));
                                 int wy = snapToGrid(scrToWldY(mseY));
+                                clampToCanvas (wx, wy);
                                 placedComp pc ={selLibItm, wx, wy, 0, false, false, "", ""} ;
                                 placedComponents.push_back(pc);
                                 UndoAction act;
@@ -1695,8 +1957,9 @@ public:
                             }
                         }
                         selLibItm ="";
+                        canvasClickHandled = true ;
                     }
-                    else if (showProp && editingIndex < placedComponents.size()) {
+                    else if (!canvasClickHandled && showProp &&editingIndex < placedComponents.size()) {
                         if (propLabelInput && propLabelInput->mouseIn(mseX, mseY) ) {
                             propLabelInput->setActive (true);
                             propValueInput->setActive(false);
@@ -1704,6 +1967,7 @@ public:
                                 searchBox->setActive(false);
                                 searchBox->setTxt( "Search...");
                             }
+                            canvasClickHandled = true ;
                         }
                         else if (propValueInput &&   propValueInput->mouseIn(mseX, mseY)) {
                             propValueInput-> setActive(true);
@@ -1712,12 +1976,13 @@ public:
                                 searchBox-> setActive(false);
                                 searchBox-> setTxt("Search...");
                             }
+                            canvasClickHandled = true;
                         }
                         else {
                             if (propLabelInput) propLabelInput->setActive(false);
                             if (propValueInput)  propValueInput->setActive(false);
                         }
-                        if (btnPropOK && btnPropOK->click(ev)){
+                        if  (!canvasClickHandled && btnPropOK && btnPropOK->click(ev)){
                             if (editingIndex <placedComponents.size()) {
                                 UndoAction act;
                                 act.type =COMP_EDIT;
@@ -1729,14 +1994,18 @@ public:
                             }
                             editingIndex = -1;
                             showProp = false;
+                            updateViewport();
                             if (propLabelInput) propLabelInput->setActive(false);
                             if (propValueInput) propValueInput->setActive(false);
+                            canvasClickHandled = true ;
                         }
-                        else if (btnPropCancel && btnPropCancel->click(ev) ) {
+                        else if (!canvasClickHandled && btnPropCancel && btnPropCancel->click(ev) ) {
                             editingIndex = -1;
                             showProp = false;
+                            updateViewport ();
                             if (propLabelInput) propLabelInput->setActive (false);
                             if (propValueInput) propValueInput->setActive (false);
+                            canvasClickHandled = true;
                         }
                     }
                 }
@@ -1861,6 +2130,7 @@ public:
                         if (!chosen.empty()) {
                             if (loadProjectFromFile(chosen)) {
                                 currentProjectPath = chosen;
+                                fitWindowToCanvas() ;
                                 resetView();
                                 resetLibExpanded();
                                 selLibItm = "";
@@ -1913,19 +2183,37 @@ public:
                             selectedIndices.clear();
                         }
                         else if(ev.key.keysym.sym == SDLK_r) {
+                            vector<placedComp>before = placedComponents;
                             for (size_t idx : selectedIndices){
                                 placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
                             }
+                            UndoAction act;
+                            act.type = COMP_TRANSFORM ;
+                            act.compsBefore = before;
+                            act.compsAfter = placedComponents;
+                            pushUndo(act);
                         }
                         else if (ev.key.keysym.sym== SDLK_h){
+                            vector <placedComp> before = placedComponents;
                             for (size_t idx: selectedIndices) {
                                 placedComponents[idx].flipH = !placedComponents[idx].flipH;
                             }
+                            UndoAction act;
+                            act.type =COMP_TRANSFORM;
+                            act.compsBefore = before;
+                            act.compsAfter =placedComponents;
+                            pushUndo(act);
                         }
                         else if(ev.key.keysym.sym == SDLK_v) {
+                            vector<placedComp> before = placedComponents;
                             for (size_t idx : selectedIndices) {
                                 placedComponents[idx].flipV = !placedComponents[idx].flipV;
                             }
+                            UndoAction act;
+                            act.type = COMP_TRANSFORM;
+                            act.compsBefore= before;
+                            act.compsAfter = placedComponents;
+                            pushUndo(act);
                         }
                         else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
                             float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
@@ -2023,6 +2311,8 @@ public:
         }
         else if (currentState ==app::WORKSPACE){
             SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255); SDL_RenderClear (renderer);
+
+            updateViewport();
 
             int leftPanelWidth = showLib ?pnlLW : 0;
             int rightPanelWidth = showProp ? pnlRW : 0;
@@ -2150,6 +2440,9 @@ public:
                 }
             }
 
+            SDL_Rect vpRect = {vpX, vpY, vpW, vpH};
+            SDL_RenderSetClipRect (renderer, &vpRect);
+
             drawGrid();
             for (size_t i = 0; i < placedComponents.size(); ++i) {
                 const auto& pc =placedComponents[i];
@@ -2169,6 +2462,14 @@ public:
                 if (!pc.label.empty()) {
                     drawTxt(pc.label, sx - 30, sy + 20, {0,0,0,255}, libFont );
                 }
+                auto pins = gCompPinPos(pc);
+                SDL_SetRenderDrawColor(renderer, 255, 0, 0, 200);
+                for (const auto& p : pins) {
+                    int px = wldToScrX(p.x) ;
+                    int py = wldToScrY(p.y);
+                    SDL_Rect pinRect = {px - 3, py - 3, 6, 6};
+                    SDL_RenderFillRect(renderer, &pinRect);
+                }
             }
 
             if (drawingSelection && selectionRect.w > 0 && selectionRect.h > 0) {
@@ -2179,6 +2480,8 @@ public:
                 SDL_RenderDrawRect(renderer, &selectionRect);
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
+
+            SDL_RenderSetClipRect(renderer , nullptr);
 
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
