@@ -3,14 +3,14 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <cmath>
+#include <algorithm>
+#include <set>                            
 #include <fstream>
 #include <sstream>
 #include <ctime>
 #include <windows.h>
 #include <commdlg.h>
-#include <algorithm>
-#include <cmath>
-#include <set>
 
 
 
@@ -349,6 +349,8 @@ private:
     int canvasHeight;
     string penProjectName;
 
+    int worldMinX,worldMaxX;                                      
+    int worldMinY,worldMaxY;                                      
 
     int grdSz;
     float zmLvl;
@@ -396,32 +398,46 @@ private:
     bool draggingComponents;
     int dragStartX, dragStartY;
     vector<placedComp>  dragSnapshots;
-    vector<placedComp> preDragComponents;
+    vector<placedComp>  preDragComponents;
+    vector<vector<SDL_Point>> preDragWires;
     SDL_Rect selectionRect;
     bool drawingSelection;
 
     bool mouseHandled;
 
-    bool wireStartActive; 
-    SDL_Point wireStartPoint; 
-    vector<vector <SDL_Point>> wires; 
+    bool wireStartActive;
+    SDL_Point wireStartPoint;
+    vector<vector<SDL_Point>> wires;
 
-    SDL_Point hoveredPin; 
-    bool hoveredPinActive; 
+    vector< SDL_Point> junctions;                                    
 
-    int wldToScrX(int wx) const { return vpX+ (int)(wx * zmLvl + panX);}
-    int wldToScrY(int wy) const { return vpY + (int)(panY + (canvasHeight - wy) * zmLvl);}
-    int scrToWldX(int sx) const { return (int)((sx - vpX - panX) / zmLvl); }
-    int scrToWldY (int sy) const { return canvasHeight - (int)((sy - vpY - panY) / zmLvl) ;}
+    SDL_Point hoveredPin;
+    bool hoveredPinActive;
 
-    int snapToGrid (int val) const {return ((val + grdSz /2) / grdSz) * grdSz;}
+    void updateWorldBounds() {                                      
+        worldMinX = -canvasWidth/ 2;                               
+        worldMaxX =  canvasWidth/ 2;                               
+        worldMinY = -canvasHeight/ 2;                              
+        worldMaxY =  canvasHeight/ 2;                              
+    }                                                               
 
-    void clampToCanvas (int& x, int& y) const {
-        if (x < 0) x= 0;
-        if (x > canvasWidth) x = canvasWidth;
-        if (y < 0) y= 0;
-        if (y > canvasHeight) y =canvasHeight;
-    }
+    int wldToScrX(int wx) const {return vpX + (int)((wx - worldMinX) * zmLvl + panX); }   
+    int wldToScrY(int wy) const { return vpY + (int)((worldMaxY - wy) * zmLvl + panY); }   
+    int scrToWldX(int sx) const{ return worldMinX + (int)((sx - vpX - panX)/ zmLvl); }   
+    int scrToWldY(int sy) const { return worldMaxY - (int)((sy - vpY - panY) / zmLvl); }   
+
+    int snapToGrid (int val) const{                                
+        int offset = val - worldMinX;                               
+        int snappedOffset =((offset + grdSz / 2)/ grdSz) * grdSz; 
+        return worldMinX + snappedOffset;                           
+    }                                                               
+
+    void clampToCanvas (int& x, int& y) const{                     
+        if (x < worldMinX) x = worldMinX;                           
+        if (x > worldMaxX) x = worldMaxX;                           
+        if (y < worldMinY) y= worldMinY;                           
+        if (y > worldMaxY) y= worldMaxY;                           
+    }                                                               
 
     void updateViewport (){
         int leftPanelWidth = showLib ? pnlLW :0;
@@ -432,106 +448,197 @@ private:
         vpH = winH - tlbrH - statH;
     }
 
-    void fitWindowToCanvas() {
-        updateViewport(); 
-    }
-
-    float pointToSegmentDist (int px, int py,int x1,int y1, int x2, int y2) { 
-        float dx = x2 - x1, dy =y2 - y1; 
-        if (dx == 0 && dy == 0) return sqrt((px-x1)*(px-x1) + (py-y1)*(py-y1)); 
-        float t = ((px - x1)*dx + (py - y1)*dy) /(dx*dx + dy*dy); 
-        t =  max(0.0f, min(1.0f, t)); 
-        float nx = x1 + t*dx, ny = y1 + t *dy; 
-        return sqrt( (px-nx)*(px-nx) + (py-ny)*(py-ny)); 
-    } 
-
-    vector<SDL_Point> calcOrthoPath (SDL_Point start, SDL_Point end) { 
-        vector<SDL_Point> path; 
-        path.push_back( start ); 
-        int dx = end.x -start.x, dy = end.y - start.y; 
-        if (dx == 0 || dy == 0) { 
-            path.push_back(end); 
-            return path; 
-        } 
-        if (abs(dx)> abs(dy)) { 
-            path.push_back({start.x + dx, start.y}); 
-            path.push_back({start.x+ dx, end.y}); 
-        }
-        else { 
-            path.push_back({start.x, start.y + dy}); 
-            path.push_back( {end.x, start.y + dy}); 
-        } 
-        path.push_back(end); 
-        return path; 
+    void fitWindowToCanvas () {                                      
+        updateViewport();                                           
     }
     
 
-    void updateWiresForMovingComp( ){ 
-        if (selectedIndices. empty()) return;
-        for (size_t j = 0; j < selectedIndices.size(); ++j) {
-            size_t idx =selectedIndices[j];
-            if (idx >= placedComponents.size()) continue;
-            placedComp oldComp = dragSnapshots[j];
-            placedComp newComp = placedComponents [idx];
-            vector<SDL_Point> oldPins = gCompPinPos(oldComp);
-            vector<SDL_Point> newPins = gCompPinPos(newComp);
-            for (auto& wire :wires){
-                for (size_t pi =0 ; pi < oldPins.size(); ++pi) {
-                    if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) {
-                        wire.front()= {newPins[pi].x, newPins[pi].y};
-                        break;
-                    }
-                    if (wire.back().x== oldPins[pi].x && wire.back().y == oldPins[pi].y) {
-                        wire.back() = {newPins[pi].x, newPins[pi].y};
-                        break;
-                    }
-                }
-            }
-
-        }
-        for (auto& wire : wires) {
-            if (wire.size() >=2) {
-                wire = calcOrthoPath(wire.front(), wire.back());
-            }
-        }
+    float pointToSegmentDist(int px, int py, int x1, int y1, int x2, int y2) {
+        float dx = x2 - x1, dy = y2 - y1;
+        if (dx == 0 && dy == 0) return sqrt((px-x1)*(px-x1) + (py-y1)*(py-y1));
+        float t = ((px - x1)*dx + (py - y1)*dy) / (dx*dx + dy*dy);
+        t = max(0.0f, min(1.0f, t));
+        float nx = x1 + t*dx, ny = y1 + t*dy;
+        return sqrt((px-nx)*(px-nx) + (py-ny)*(py-ny));
     }
 
-    void moveWiresSmoothly(int deltaX, int deltaY ) {
-        if (selectedIndices.empty()) return;
-        set <int> movedWires;
-        for (size_t j = 0; j < selectedIndices.size(); ++j){
-            size_t idx = selectedIndices[j];
-            if (idx >= placedComponents.size()) continue ;
-            placedComp oldComp = dragSnapshots[j];
-            vector<SDL_Point> oldPins = gCompPinPos(oldComp);
-            for (size_t wi = 0; wi < wires.size(); ++wi ) {
-                if (movedWires.count(wi)) continue;
-                auto& wire =wires[wi];
-                bool found = false;
-                for (size_t pi = 0; pi < oldPins.size(); ++pi) {
-                    if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y){
-                        for (auto& pt : wire) {
-                            pt.x += deltaX;
-                            pt.y += deltaY;
-                        }
-                        found =true;
-                        break;
-                    }
-                    if (wire.back().x == oldPins [pi].x && wire.back().y == oldPins[pi].y) {
-                        for (auto& pt : wire) {
-                            pt.x += deltaX;
-                            pt.y += deltaY;
-                        }
-                        found =true;
-                        break;
-                    }
-                }
-                if (found)  movedWires.insert(wi);
-            }
+    vector<SDL_Point> calcOrthoPath(SDL_Point start, SDL_Point end) {
+        vector<SDL_Point> path;
+        path.push_back(start);
+        int dx = end.x - start.x, dy = end.y - start.y;
+        if (dx == 0 || dy == 0) {
+            path.push_back(end);
+            return path;
         }
+        if (abs(dx) > abs(dy)) {
+            path.push_back({start.x + dx, start.y});
+            path.push_back({start.x + dx, end.y});
+        } else {
+            path.push_back({start.x, start.y + dy});
+            path.push_back({end.x, start.y + dy});
+        }
+        path.push_back(end);
+        return path;
     }
 
-    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM, WIRE_ADD,WIRE_DELETE};
+    void updateWiresForMovingComp(){                          
+        if (selectedIndices.empty()) return;                         
+        for (size_t j = 0; j< selectedIndices.size(); ++j) {       
+            size_t idx = selectedIndices [j];                         
+            if (idx >= placedComponents.size()) continue;            
+            placedComp oldComp = dragSnapshots[j];                   
+            placedComp newComp = placedComponents [idx];              
+            vector<SDL_Point> oldPins = gCompPinPos(oldComp);        
+            vector<SDL_Point> newPins = gCompPinPos(newComp);        
+            for (auto& wire :wires) {                               
+                for (size_t pi = 0; pi < oldPins.size(); ++pi) {     
+                    if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) { 
+                        wire.front() ={newPins[pi].x, newPins[pi].y}; 
+                        break;                                       
+                    }                                                
+                    if (wire.back().x == oldPins[pi].x&& wire.back().y == oldPins[pi].y) { 
+                        wire.back() = {newPins[pi].x, newPins[pi].y}; 
+                        break;                                       
+                    }                                                
+                }                                                    
+            }                                                        
+        }                                                            
+        for (auto& wire : wires){                                   
+            if (wire.size() >=2) {                                  
+                wire = calcOrthoPath(wire.front(), wire.back());     
+            }                                                        
+        }                                                            
+    }                                                                
+
+    void moveWiresSmooth( int deltaX,int deltaY ) {                 
+        if (selectedIndices.empty()) return;                         
+        set<int> movedWires;                                         
+        for (size_t j = 0; j < selectedIndices.size(); ++j) {        
+            size_t idx =selectedIndices[j];                         
+            if (idx >= placedComponents.size()) continue;            
+            placedComp oldComp = dragSnapshots[j];                   
+            vector<SDL_Point> oldPins = gCompPinPos (oldComp);        
+            for (size_t wi = 0; wi < wires.size() ; ++wi) {           
+                if (movedWires.count(wi)) continue;                  
+                auto& wire = wires[wi];                              
+                bool found = false;                                  
+                for (size_t pi = 0 ; pi < oldPins.size(); ++pi) {     
+                    if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) { 
+                        for (auto& pt : wire) {                      
+                            pt.x += deltaX;                          
+                            pt.y += deltaY;                          
+                        }                                            
+                        found = true;                                
+                        break;                                       
+                    }                                                
+                    if (wire.back().x == oldPins[pi] .x && wire.back().y == oldPins[pi].y) { 
+                        for (auto& pt : wire) {                      
+                            pt.x += deltaX;                          
+                            pt.y +=deltaY;                          
+                        }                                            
+                        found = true;                                
+                        break;                                       
+                    }                                                
+                }                                                    
+                if (found) movedWires.insert(wi);                    
+            }                                                        
+        }                                                            
+    }                                                                
+
+    bool segmentsIntersect(SDL_Point p1 , SDL_Point p2, SDL_Point q1,SDL_Point q2, SDL_Point& intersection) { 
+        int d1x = p2.x- p1.x, d1y = p2.y - p1.y;                   
+        int d2x = q2.x - q1.x, d2y = q2.y - q1.y;                   
+        int cross = d1x * d2y - d1y * d2x;                           
+        if (cross ==0) return false;                                
+        int dx = q1.x - p1.x, dy = q1.y - p1.y;                     
+        float t = float(dx * d2y - dy * d2x) / cross;                
+        float u = float(dx * d1y - dy * d1x) / cross;                
+        if (t >= 0.0f && t <= 1.0f && u >= 0.0f && u <= 1.0f) {     
+            intersection.x = p1.x + (int) (t * d1x + 0.5f);           
+            intersection.y = p1.y + (int) (t * d1y + 0.5f);           
+            return true;                                             
+        }                                                            
+        return false;                                                
+    }                                                                
+
+    bool pointNear(SDL_Point a , SDL_Point b, int threshold = 6){    
+        int dx = a.x - b.x, dy =a.y - b.y;                          
+        return (dx*dx + dy*dy) <= threshold*threshold;               
+    }                                                                
+
+    void removeJunctionsOnWire(const vector<SDL_Point>& wire) {      
+        for (int i = (int) junctions.size () - 1; i >= 0; --i) {       
+            SDL_Point jpt = junctions[i];                            
+            for (size_t s = 0; s + 1 < wire.size(); ++s) {            
+                if (pointToSegmentDist(jpt.x, jpt.y, wire[s].x, wire[s].y, wire[s+1].x, wire[s+1].y) < 4) { 
+                    junctions.erase(junctions.begin() +i);           
+                    break;                                           
+                }                                                    
+            }                                                        
+        }                                                            
+    }                                                                
+
+    bool isPointInsideComponent ( const placedComp& comp, int wx, int wy ) const { 
+        int dx = wx - comp.x;                                        
+        int dy = wy - comp.y;                                        
+        float rad = -comp.angle * 3.14159f / 180.0f;                 
+        float s = sin(rad) , c = cos(rad);                            
+        float rx = c*dx - s*dy;                                       
+        float ry = s*dx + c*dy;                                       
+        int lx = (int)(rx * (comp.flipH ? -1 : 1));                  
+        int ly = (int)(ry * (comp.flipV ? -1 : 1));                  
+        return (lx >= -40 && lx<= 40 && ly >= -20 && ly <= 20);     
+    }                                                                
+
+    void getCompCorners(const placedComp& comp, SDL_Point corners[4]) const { 
+        auto transform = [&](int lx, int ly) -> SDL_Point {         
+            int sx = comp.flipH? -1 : 1;                            
+            int sy = comp.flipV? -1 : 1;                            
+            int rx = lx * sx;                                        
+            int ry = ly * sy;                                        
+            float rad= comp.angle * 3.14159f / 180.0f;             
+            float s = sin(rad), c = cos(rad);                       
+            int fx = (int)(rx * c - ry * s);                         
+            int fy = (int)(rx * s + ry * c);                         
+            return {wldToScrX(comp.x + fx),wldToScrY(comp.y + fy)}; 
+        };                                                            
+        corners[0] = transform(-40, -20);                             
+        corners[1] = transform(40, -20);                              
+        corners[2] = transform(40, 20);                               
+        corners[3] = transform(-40, 20);                              
+    }                                                                
+
+    void drawRotatedSelection(const placedComp& comp) const {        
+        SDL_Point corners [4];                                        
+        getCompCorners(comp, corners);                               
+
+        SDL_SetRenderDrawColor(renderer, 255, 255, 0, 60);           
+        SDL_Vertex vertices[5];                                      
+        for (int i = 0; i < 4; i++) {                                
+            vertices[i].position.x = (float)corners[i].x ;            
+            vertices[i].position.y = (float)corners[i].y;            
+            vertices[i].color = {255, 255, 0, 60};                   
+        }                                                            
+        int indices[] = {0, 1, 2, 2, 3, 0} ;                         
+        if (SDL_RenderGeometry (renderer, nullptr, vertices, 4, indices, 6) < 0) { 
+            SDL_Rect bb = {corners[0].x, corners[0].y, 0, 0};        
+            for (int i = 1; i < 4;i++) {                            
+                if (corners[i].x < bb.x) bb.x = corners[i].x;        
+                if (corners[i].y < bb.y) bb.y = corners[i].y;        
+            }                                                        
+            bb.w = max(corners[1].x, corners [2].x) - bb.x;           
+            bb.h = max(corners[2].y, corners[3].y) - bb.y;           
+            SDL_RenderFillRect(renderer, &bb);                       
+        }                                                            
+
+        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);            
+        SDL_Point outline[5];                                        
+        for (int i = 0; i < 4; i++) outline[i] = corners[i];         
+        outline[4] = corners[0];                                     
+        SDL_RenderDrawLines(renderer, outline,5);                   
+    }                                                                
+
+    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM,WIRE_ADD, WIRE_DELETE, WIRE_JUNCTION_ADD, WIRE_JUNCTION_REMOVE}; 
     struct UndoAction{
         UndoType type;
         placedComp comp;
@@ -540,8 +647,11 @@ private:
         int activeIndex;
         vector<placedComp> compsBefore;
         vector<placedComp> compsAfter ;
-        vector<vector<SDL_Point >> wiresBefore;
-        vector<vector<SDL_Point>> wiresAfter;
+        vector<vector<SDL_Point>> wiresBefore;
+        vector<vector <SDL_Point>> wiresAfter;
+        vector<SDL_Point> junctionsBefore;                          
+        vector<SDL_Point> junctionsAfter;                           
+        SDL_Point junctionPoint;                                    
     };
     vector<UndoAction> undoStack;
     vector<UndoAction> redoStack;
@@ -553,8 +663,6 @@ private:
     size_t editingIndex;
     size_t lastClickedIndex;
     Uint32 lastClickTime;
-
-    vector<vector<SDL_Point>> preDragWires;
 
     void pushUndo (const UndoAction& action){
         undoStack.push_back(action);
@@ -572,12 +680,14 @@ private:
                     break;
                 }
             }
-            wires = act.wiresBefore ;
+            wires = act.wiresBefore;
+            junctions =act.junctionsBefore;                         
             redoStack.push_back(act);
         }
         else if (act.type== COMP_DELETE) {
             placedComponents.push_back(act.comp);
-            wires =act.wiresBefore;
+            wires = act.wiresBefore;
+            junctions = act.junctionsBefore;                         
             redoStack.push_back(act) ;
         }
         else if (act.type == ACTIVE_ADD) {
@@ -602,7 +712,7 @@ private:
         }
         else if (act.type == COMP_MOVE){
             placedComponents = act.compsBefore;
-            wires = act.wiresBefore ;
+            wires = act.wiresBefore;
             redoStack.push_back(act);
         }
         else if (act.type == COMP_TRANSFORM) {
@@ -613,28 +723,38 @@ private:
         else if (act.type == COMP_EDIT) {
             size_t idx = -1;
             for(size_t i = 0; i < placedComponents.size(); ++i){
-                if (placedComponents[i].name== act.oldComp.name && placedComponents[i].x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
+                if (placedComponents[i].name== act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     idx = i;
                     break;
                 }
             }
             if (idx < placedComponents.size() ) {
-                placedComponents[idx] =act.comp;
+                placedComponents[idx] = act.oldComp;
                 UndoAction redoAct;
                 redoAct.type = COMP_EDIT;
-                redoAct.oldComp = act.comp;
-                redoAct.comp = act.oldComp;
+                redoAct.oldComp = act.oldComp;
+                redoAct.comp = act.comp;
                 redoStack.push_back (redoAct);
             }
         }
-        else if (act.type == WIRE_ADD){
+        else if (act.type == WIRE_ADD) {
             wires = act.wiresBefore;
-            redoStack .push_back(act);
+            junctions = act.junctionsBefore ;                         
+            redoStack.push_back(act);
         }
         else if (act.type == WIRE_DELETE) {
             wires = act.wiresBefore;
-            redoStack.push_back (act);
+            junctions = act.junctionsBefore;                         
+            redoStack.push_back(act);
         }
+        else if (act.type== WIRE_JUNCTION_ADD) {                   
+            junctions = act.junctionsBefore;                         
+            redoStack.push_back(act);                                
+        }                                                            
+        else if (act.type == WIRE_JUNCTION_REMOVE) {                 
+            junctions = act.junctionsBefore;                         
+            redoStack.push_back (act);                                
+        }                                                            
     }
 
     void redo() {
@@ -644,6 +764,7 @@ private:
         if (act.type == COMP_PLACE){
             placedComponents.push_back(act.comp) ;
             wires = act.wiresAfter;
+            junctions= act.junctionsAfter;                          
             undoStack.push_back(act);
         }
         else if (act.type == COMP_DELETE) {
@@ -653,7 +774,8 @@ private:
                     break;
                 }
             }
-            wires = act.wiresAfter ;
+            wires = act.wiresAfter;
+            junctions = act.junctionsAfter;                          
             undoStack.push_back(act);
         }
         else if (act.type == ACTIVE_ADD) {
@@ -676,15 +798,15 @@ private:
             }
         }
         else if (act.type ==COMP_MOVE) {
-            placedComponents = act.compsAfter; 
+            placedComponents = act.compsAfter;
             wires = act.wiresAfter;
-            undoStack.push_back(act); 
+            undoStack.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM ) { 
-            placedComponents = act.compsAfter; 
-            wires  = act.wiresAfter;
-            undoStack.push_back(act); 
-        } 
+        else if (act.type == COMP_TRANSFORM ) {
+            placedComponents = act.compsAfter;
+            wires = act.wiresAfter;
+            undoStack.push_back(act);
+        }
         else if (act.type ==  COMP_EDIT) {
             size_t idx =-1;
             for (size_t i = 0; i < placedComponents.size();++i) {
@@ -698,36 +820,47 @@ private:
                 undoStack.push_back(act);
             }
         }
-        else if (act.type== WIRE_ADD){
-            wires = act.wiresAfter;
+        else if (act.type == WIRE_ADD) {
+            wires =act.wiresAfter;
+            junctions = act.junctionsAfter;                          
             undoStack.push_back(act);
         }
         else if (act.type == WIRE_DELETE) {
             wires = act.wiresAfter;
+            junctions = act.junctionsAfter;                          
             undoStack.push_back(act);
         }
+        else if (act.type == WIRE_JUNCTION_ADD){                   
+            junctions = act .junctionsAfter;                          
+            undoStack.push_back(act);                                
+        }                                                            
+        else if ( act.type == WIRE_JUNCTION_REMOVE) {                 
+            junctions = act.junctionsAfter;                          
+            undoStack.push_back(act);                                
+        }                                                            
     }
 
     void resetView() {
-        zmLvl =1.0f;
-        panX = 1;
-        panY = (winH -tlbrH - statH) - canvasHeight - 1;
+        zmLvl = 1.0f;
+        updateViewport();                                            
+        panX = vpW / 2 - canvasWidth / 2;                            
+        panY = vpH / 2 - canvasHeight/ 2;                           
     }
 
     void drawGrid() {
         if (!showGrid)
             return ;
-        int wL = scrToWldX(vpX), wT = scrToWldY (vpY);
-        int wR= scrToWldX(vpX+vpW), wB = scrToWldY(vpY+vpH);
-        int startX = (wL / grdSz) * grdSz ;
-        int startY = (wT / grdSz) * grdSz;
-        SDL_SetRenderDrawColor(renderer, 200,200,200, 60);
+        int wL = scrToWldX(vpX), wT = scrToWldY (vpY);                
+        int wR= scrToWldX (vpX+vpW), wB = scrToWldY(vpY+vpH);         
+        int startX = ((wL - worldMinX) / grdSz) * grdSz + worldMinX; 
+        int startY = worldMinY + ((wT - worldMinY) / grdSz) * grdSz; 
+        SDL_SetRenderDrawColor (renderer, 200,200,200, 60);
         for (int x = startX; x <= wR ; x += grdSz) {
             int sx = wldToScrX(x);
             if (sx >= vpX && sx < vpX+vpW)
                 SDL_RenderDrawLine(renderer, sx, vpY, sx, vpY+vpH);
         }
-        for (int y = startY; y >= wB ;y -= grdSz){
+        for (int y = startY; y >= wB ; y -= grdSz){
             int sy = wldToScrY(y) ;
             if (sy >= vpY && sy < vpY+vpH)
                 SDL_RenderDrawLine(renderer, vpX, sy, vpX+ vpW, sy);
@@ -865,13 +998,232 @@ private:
         return pins;
     }
 
-    void drawCompPreview(const string& compName, SDL_Rect area,const placedComp& comp, bool drawBg = true){
-        if (drawBg){
-            SDL_SetRenderDrawColor(renderer, 245,245,245,255);
-            SDL_RenderFillRect(renderer , &area);
-            SDL_SetRenderDrawColor(renderer, 100,100,100,255) ;
-            SDL_RenderDrawRect(renderer, &area);
+    void drawCompCanvas(const placedComp& comp) const{        
+        auto toScreen = [&](int lx, int ly) -> SDL_Point {
+            int sx = comp.flipH ? -1 : 1;
+            int sy = comp.flipV ? -1 : 1;
+            int fx = lx * sx;
+            int fy = -ly *sy;
+            float rad = comp.angle * 3.14159f / 180.0f;
+            float s = sin(rad),c = cos(rad);
+            int rx = (int)(fx * c - fy * s);
+            int ry = (int)(fx * s + fy * c);
+            int wx = comp.x + rx;
+            int wy = comp.y + ry;
+            return {wldToScrX(wx), wldToScrY(wy)};
+        } ;
+
+        if (comp.name == "Resistor") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            int x = -32, y = 0;
+            for (int i=0; i<4; i++){
+                auto p1 = toScreen(x, y);
+                auto p2 = toScreen(x+8, y-8);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+                x+=8; y-=8;
+                p1 = toScreen(x, y);
+                p2 = toScreen(x+8, y+8);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+                x+=8; y+=8;
+            }
         }
+        else if (comp.name == "Capacitor") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = toScreen(-10, -15);
+            auto p2 = toScreen(-10, 15);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(10, -15);
+            p2 = toScreen(10, 15);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+        }
+        else if (comp.name == "Inductor") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            int x = -27, y = 0;
+            for (int i=0; i<5; i++) {
+                auto p1 = toScreen(x, y);
+                auto p2 = toScreen(x+5, y-7);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+                x+=5; y-=7;
+                p1 = toScreen(x, y);
+                p2 = toScreen(x+5, y+7);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+                x+=5; y+=7;
+            }
+        }
+        else if (comp.name == "LED") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = toScreen(-8, -10);
+            auto p2 = toScreen(-8, 10);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-8, -10);  p2 = toScreen(4, 0);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-8, 10);   p2 = toScreen(4, 0);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(4, -10);   p2 = toScreen(4, 10);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(10, -8);   p2 = toScreen(6, -4);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(10, -8);   p2 = toScreen(6, -2);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(10, 8);    p2 = toScreen(6, 4);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(10, 8);    p2 = toScreen(6, 2);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+        }
+        else if (comp.name == "Transistor") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = toScreen(0, -10);
+            auto p2 = toScreen(0, 10);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-8, -4);  p2 = toScreen(8, -8);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-8, 4);   p2 = toScreen(8, 8);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            int cx = wldToScrX(comp.x), cy = wldToScrY(comp.y);
+            SDL_Rect circle = {cx-12, cy-12, 24, 24};
+            SDL_RenderDrawRect(renderer, &circle);
+        }
+        else if (comp.name == "NPN" || comp.name == "PNP") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            int cx = wldToScrX(comp.x), cy = wldToScrY(comp.y);
+            SDL_Rect circle = {cx-12, cy-12, 24, 24};
+            SDL_RenderDrawRect(renderer, &circle);
+            auto coll = toScreen(0, -12);
+            auto emit = toScreen(0, 12);
+            auto base = toScreen(-12, 0);
+            auto center = toScreen(0, 0);
+            SDL_RenderDrawLine(renderer, coll.x, coll.y, center.x, center.y);
+            SDL_RenderDrawLine(renderer, emit.x, emit.y, center.x, center.y);
+            SDL_RenderDrawLine(renderer, base.x, base.y, center.x, center.y);
+            vector<pair<int,int>> arrow;
+            if(comp.name == "NPN") arrow = {{0,8}, {-3,5}, {3,5}};
+            else arrow = {{0,-8},{-3,-5},{3,-5}};
+            auto tp = toScreen(arrow[0].first, arrow[0].second);
+            auto ap1 = toScreen(arrow[1].first, arrow[1].second);
+            auto ap2 = toScreen(arrow[2].first, arrow[2].second);
+            SDL_RenderDrawLine(renderer, tp.x, tp.y, ap1.x, ap1.y);
+            SDL_RenderDrawLine(renderer, ap1.x, ap1.y, ap2.x, ap2.y);
+            SDL_RenderDrawLine(renderer, ap2.x, ap2.y, tp.x, tp.y);
+        }
+        else if (comp.name == "Ground") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = toScreen(0, -10);
+            auto p2 = toScreen(0, 0);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-8, 0); p2 = toScreen(8, 0);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-5, 5); p2 = toScreen(5, 5);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            p1 = toScreen(-3, 10); p2 = toScreen(3, 10);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+        }
+        else if (comp.name == "VCC") {
+            SDL_SetRenderDrawColor(renderer, 180,20,20,255);
+            auto p1 = toScreen(0, -12);
+            auto p2 = toScreen(0, 8);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            auto p3 = toScreen(-5, 1); auto p4 = toScreen(5, 1);
+            SDL_RenderDrawLine(renderer, p3.x, p3.y, p4.x, p4.y);
+            auto p5 = toScreen(-3, -6); auto p6 = toScreen(3, -6);
+            SDL_RenderDrawLine(renderer, p5.x, p5.y, p6.x, p6.y);
+        }
+        else if (comp.name == "Battery") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = toScreen(0, -12);
+            auto p2 = toScreen(0, -4);
+            SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            auto p3 = toScreen(-4, -4); auto p4 = toScreen(4, -4);
+            SDL_RenderDrawLine(renderer, p3.x, p3.y, p4.x, p4.y);
+            auto p5 = toScreen(-8, 1); auto p6 = toScreen(8, 1);
+            SDL_RenderDrawLine(renderer, p5.x, p5.y, p6.x, p6.y);
+            auto p7 = toScreen(0, 1); auto p8 = toScreen(0, 10);
+            SDL_RenderDrawLine(renderer, p7.x, p7.y, p8.x, p8.y);
+        }
+        else if (comp.name == "AND Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-20,-12}, {-20,12},{-20,-12}, {6,-12}, {-20,12}, {6,12}, {6,-12}, {10,-8},
+                {10,-8}, {12,-4},{12,-4}, {12,4},{12,4}, {10,8}, {10,8}, {6,12},
+                {12,0},{18,0}, {-26,-8}, {-20,-8},{-26,8}, {-20,8}
+            };
+            for (size_t i=0; i<points.size(); i+=2) {
+                auto p1 = toScreen(points[i].first, points[i].second);
+                auto p2 = toScreen(points[i+1].first, points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            }
+        }
+        else if (comp.name == "OR Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {6,-12},{-12,12}, {6,12}, {-12,-12}, {-8,-10},{-8,-10}, {-6,-4},
+                {-6,-4}, {-6,4},{-6,4}, {-8,10}, {-8,10}, {-12,12}, {6,-12}, {10,-8},
+                {10,-8}, {12,-4},{12,-4}, {12,4},{12,4}, {10,8},{10,8}, {6,12},
+                {12,0}, {18,0},{-22,-8}, {-12,-8}, {-22,8}, {-12,8}
+            };
+            for (size_t i=0; i<points.size(); i+=2) {
+                auto p1 = toScreen(points[i].first, points[i].second);
+                auto p2 = toScreen(points[i+1].first, points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            }
+        }
+        else if (comp.name == "NOT Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {-12,12},{-12,-12}, {8,0}, {-12,12}, {8,0}, {-18,0}, {-12,0}
+            };
+            for (size_t i=0; i<points.size(); i+=2) {
+                auto p1 = toScreen(points[i].first, points[i].second);
+                auto p2 = toScreen(points[i+1].first, points[i+1].second);
+                SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
+            }
+            auto bubbleCenter = toScreen(12, 0);
+            int r =3;
+            for (int a=0; a<360; a+=30) {
+                float a1 = a*3.14159f/180.0f, a2 = (a+30)*3.14159f/180.0f;
+                int x1 = bubbleCenter.x + (int)(r*cos(a1)), y1 = bubbleCenter.y + (int)(r*sin(a1));
+                int x2 = bubbleCenter.x + (int)(r*cos(a2)), y2 = bubbleCenter.y + (int)(r*sin(a2));
+                SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+            }
+            auto pOut1 = toScreen(15, 0);
+            auto pOut2 = toScreen(22, 0);
+            SDL_RenderDrawLine(renderer, pOut1.x, pOut1.y, pOut2.x, pOut2.y);
+        }
+        else if (comp.name == "7-Segment") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto top    = toScreen(0, -14);
+            auto topL   = toScreen(-12, -10);
+            auto topR   = toScreen(12, -10);
+            auto mid    = toScreen(0, 0);
+            auto botL   = toScreen(-12, 10);
+            auto botR   = toScreen(12, 10);
+            auto bot    = toScreen(0, 14);
+            auto upL1   = toScreen(-12, -10);
+            auto upL2   = toScreen(-12, -2);
+            auto upR1   = toScreen(12, -10);
+            auto upR2   = toScreen(12, -2);
+            auto lowL1  = toScreen(-12, 2);
+            auto lowL2  = toScreen(-12, 10);
+            auto lowR1  = toScreen(12, 2);
+            auto lowR2  = toScreen(12, 10);
+
+            SDL_RenderDrawLine(renderer, topL.x, topL.y, topR.x, topR.y);
+            SDL_RenderDrawLine(renderer, upL1.x, upL1.y, upL2.x, upL2.y);
+            SDL_RenderDrawLine(renderer, upR1.x, upR1.y, upR2.x, upR2.y);
+            SDL_RenderDrawLine(renderer, mid.x-10, mid.y, mid.x+10, mid.y);
+            SDL_RenderDrawLine(renderer, lowL1.x, lowL1.y, lowL2.x, lowL2.y);
+            SDL_RenderDrawLine(renderer, lowR1.x, lowR1.y, lowR2.x, lowR2.y);
+            SDL_RenderDrawLine(renderer, botL.x, botL.y, botR.x, botR.y);
+        }
+        else {
+            drawTxt(comp.name.substr(0,4), wldToScrX(comp.x)-20, wldToScrY(comp.y)-10, {0,0,0,255});
+        }
+    }
+
+    void drawCompPreviewLib(const string& compName, SDL_Rect area) const {
+        SDL_SetRenderDrawColor(renderer, 245,245,245,255);
+        SDL_RenderFillRect(renderer, &area);
+        SDL_SetRenderDrawColor(renderer, 100,100,100,255);
+        SDL_RenderDrawRect(renderer, &area);
 
         int cx = area.x + area.w / 2, cy = area.y + area.h/ 2;
         auto rotatePoint = [&](int px, int py, float rad) -> pair<int,int> {
@@ -881,9 +1233,8 @@ private:
             int ry = (int)(dx * s + dy * c ) + cy;
             return {rx, ry};
         };
-        float rad = comp.angle *3.14159f / 180.0f;
-        int sx = comp.flipH ? -1 : 1;
-        int sy = comp.flipV ? -1 : 1;
+        float rad = 0.0f;
+        int sx = 1, sy = 1;
         auto flipPoint = [&](int px, int py) -> pair<int,int> {
             int dx = px - cx, dy = py - cy ;
             return {cx + dx * sx, cy + dy * sy};
@@ -1318,14 +1669,19 @@ private:
         for (const auto& pc : placedComponents) {
             file << pc.name << "|" << pc.x << "|" << pc.y << "|"<< pc.angle << "|" << pc.flipH << "|" << pc.flipV << "|" << pc.label << "|" << pc.value << "\n";
         }
-        file << wires.size () << "\n";
-        for (const auto& wire : wires ) {
-            file <<  wire.size();
+        file << wires.size() << "\n";
+        for (const auto& wire : wires) {
+            file << wire.size();
             for (const auto& pt : wire) {
                 file << " " << pt.x << " " << pt.y;
             }
             file << "\n";
         }
+        file << junctions.size() << "\n" ;
+        for (const auto& j : junctions) {
+            file << j.x << " " << j.y << "\n";
+        }
+
         file.close();
     }
 
@@ -1366,28 +1722,41 @@ private:
             }
         }
         wires.clear();
-        int wireCount =0;
-        if (file >> wireCount){
+        int wireCount = 0;
+        if (file >> wireCount) {
             file.ignore();
-            for (int i = 0; i< wireCount; ++i) {
-                if (!getline(file, line)) break ;
+            for (int i = 0; i < wireCount; ++i) {
+                if (!getline(file, line)) break;
                 stringstream ss(line);
                 int ptCount;
-                ss >>ptCount;
+                ss >> ptCount;
                 vector<SDL_Point> wire;
                 for (int j = 0; j < ptCount; ++j) {
                     SDL_Point pt;
                     ss >> pt.x >> pt.y;
                     wire.push_back(pt);
                 }
-                wires.push_back (wire);
+                wires.push_back(wire);
+            }
+        }
+        junctions.clear();
+        int junctionCount =  0;
+        if (file >> junctionCount) {
+            file.ignore ();
+            for (int i = 0; i < junctionCount; ++i) {
+                if (!getline(file, line)) break;
+                stringstream ss (line);
+                SDL_Point pt;
+                ss >> pt.x >> pt.y;
+                junctions.push_back(pt);
             }
         }
         file.close();
-        selectedIndices.clear();
+        selectedIndices .clear();
         editingIndex = -1;
         lastClickedIndex = -1;
         lastClickTime = 0;
+        updateWorldBounds ();
         return true ;
     }
 
@@ -1402,6 +1771,7 @@ public:
         currentState = app::STARTUP_MENU;
         canvasWidth = 800;
         canvasHeight =600;
+        updateWorldBounds();
         txtWidth = nullptr;
         txtHeight = nullptr;
         btnCustomOK= nullptr;
@@ -1416,7 +1786,7 @@ public:
         grdSz = 20;
         zmLvl =1.0f;
         panX = 1;
-        panY = (winH - tlbrH - statH)- canvasHeight - 1;
+        panY = (vpH - 1) - (int) ((worldMaxY - worldMinY) * zmLvl);
         isPan = false;
         statH = 30 ;
         winW = 850;winH = 600;
@@ -1445,7 +1815,7 @@ public:
         lastClickedIndex = -1;
         lastClickTime = 0;
         mouseHandled= false;
-        wireStartActive =false;
+        wireStartActive = false;
         hoveredPinActive = false;
 
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
@@ -1539,8 +1909,7 @@ public:
         int xpos= 120;
         tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos += 80;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 105,24,{255,255,255,255},{230,230,230,255}, "Comp/Lib")) ; xpos+=115;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Prop")); xpos += 65;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 180,24,{255,255,255,255},{230,230,230,255}, "Component Library")) ; xpos+=190;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Save")); xpos += 65;
         tlbrBtns.push_back(new BUTTONS (renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Load")); xpos+= 65;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Undo")); xpos+=65;
@@ -1614,8 +1983,8 @@ public:
                             SDL_SetWindowMinimumSize (window, 400, 300);
                             SDL_SetWindowMaximumSize (window, 0, 0);
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
+                            resetLibExpanded() ;
                             resetView();
-                            resetLibExpanded();
                             selLibItm = "";
                             currentTool = Tool::SELECT;
                             SDL_FlushEvent( SDL_MOUSEBUTTONDOWN );
@@ -1646,8 +2015,8 @@ public:
                             SDL_SetWindowMinimumSize(window, 400, 300);
                             SDL_SetWindowMaximumSize(window, 0, 0) ;
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-                            resetView();
                             resetLibExpanded ();
+                            resetView();
                             selLibItm = "";
                             currentTool = Tool::SELECT;
                             SDL_FlushEvent (SDL_MOUSEBUTTONDOWN);
@@ -1725,6 +2094,7 @@ public:
                     if (!wStr.empty() && !hStr.empty()) { canvasWidth = stoi (wStr); canvasHeight = stoi(hStr); }
                     else { canvasWidth = 800; canvasHeight = 600; }
                     if (txtWidth) txtWidth->setActive (false); if (txtHeight) txtHeight->setActive(false);
+                    updateWorldBounds ();
                     penProjectName = diffName("Untitled"); openNameDialog();
                 }
                 else if ( btnCustomCancel && btnCustomCancel->click(adjEv)) {
@@ -1766,13 +2136,15 @@ public:
                     string path = "./" + finalName  + ".proj";
                     activeComps.clear();
                     placedComponents.clear();
-                    wires.clear() ;
+                    wires.clear();
+                    junctions.clear();
                     undoStack.clear() ;
                     redoStack.clear();
                     selectedIndices.clear();
                     editingIndex =-1;
                     lastClickedIndex = -1;
                     lastClickTime = 0;
+                    updateWorldBounds ();
                     addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
                     saveProjectToFile (path);
                     currentProjectPath = path;
@@ -1782,8 +2154,8 @@ public:
                     SDL_SetWindowMinimumSize(window, 400, 300);
                     SDL_SetWindowMaximumSize(window, 0, 0);
                     SDL_SetWindowPosition (window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-                    resetView();
                     resetLibExpanded();
+                    resetView();
                     selLibItm = "";
                     currentTool =Tool::SELECT;
                     SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
@@ -1808,7 +2180,7 @@ public:
                     SDL_SetWindowMaximumSize ( window, 0, 0);
                     selLibItm = "";
                     currentTool = Tool::SELECT;
-                    wireStartActive =false;
+                    wireStartActive = false;
                     selectedIndices. clear();
                     mouseHandled =true;
                 }
@@ -1821,8 +2193,15 @@ public:
                     cout << "Select tool\n";
                 }
                 else if(!mouseHandled && tlbrBtns[1]->click(ev)) {
-                    currentTool = Tool::WIRE; selLibItm = "";
-                    wireStartActive = false ;
+                    if (currentTool == Tool::WIRE){
+                        currentTool = Tool ::SELECT;
+                        wireStartActive = false;
+                    }
+                    else {
+                        currentTool = Tool::WIRE;
+                        selLibItm = "" ;
+                        wireStartActive = false;
+                    }
                     mouseHandled = true;
                     cout << "Wire tool\n";
                 }
@@ -1837,19 +2216,12 @@ public:
                         currentTool = Tool::SELECT;
                         selLibItm = "";
                     }
-                    wireStartActive =  false;
+                    wireStartActive = false;
                     updateViewport() ;
                     mouseHandled = true;
                     cout<< "Component Library toggled\n";
                 }
-                else if (!mouseHandled && tlbrBtns [3]->click(ev)) {
-                    showProp = !showProp;
-                    if (!showProp) editingIndex = -1;
-                    updateViewport() ;
-                    mouseHandled = true;
-                    cout << "Properties panel toggled\n";
-                }
-                else if (!mouseHandled && tlbrBtns [4]->click(ev)){
+                else if (!mouseHandled && tlbrBtns [3]->click(ev)){
                     if (!currentProjectPath.empty()) {
                         saveProjectToFile (currentProjectPath);
                         addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
@@ -1858,14 +2230,14 @@ public:
                     selLibItm = "";
                     mouseHandled = true;
                 }
-                else if(!mouseHandled && tlbrBtns[5]->click(ev)) {
+                else if(!mouseHandled && tlbrBtns[4]->click(ev)) {
                     string chosen = fileDialog();
                     if (!chosen.empty ()) {
                         if (loadProjectFromFile(chosen)) {
                             currentProjectPath = chosen;
                             fitWindowToCanvas();
-                            resetView();
                             resetLibExpanded();
+                            resetView();
                             selLibItm = "" ;
                             currentTool = Tool::SELECT;
                             wireStartActive = false;
@@ -1877,12 +2249,12 @@ public:
                     selLibItm = "";
                     mouseHandled =true;
                 }
-                else if (!mouseHandled && tlbrBtns[6]->click (ev)) {
+                else if (!mouseHandled && tlbrBtns[5]->click (ev)) {
                     undo();
                     mouseHandled = true;
                     cout << "Undo\n";
                 }
-                else if (!mouseHandled && tlbrBtns[7]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns[6]->click(ev)) {
                     redo();
                     mouseHandled = true;
                     cout << "Redo \n";
@@ -2027,39 +2399,40 @@ public:
                                 panStartX = ev.button.x ; panStartY = ev.button.y;
                                 panOffXst = panX; panOffYst = panY;
                             }
-                            else if ( currentTool == Tool::WIRE) {
-                                int wx = snapToGrid(scrToWldX (mseX));
-                                int wy = snapToGrid(scrToWldY (mseY));
+                            else if (currentTool == Tool::WIRE) {
+                                int wx = snapToGrid(scrToWldX(mseX));
+                                int wy = snapToGrid(scrToWldY(mseY));
                                 clampToCanvas(wx, wy);
                                 SDL_Point clickPoint = {wx, wy};
 
                                 bool foundPin = false;
                                 for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
-                                    auto pins =gCompPinPos(placedComponents[ci]);
+                                    auto pins = gCompPinPos(placedComponents[ci]);
                                     for (size_t pi = 0; pi < pins.size(); ++pi) {
-                                        int px = pins [pi].x, py = pins[pi].y;
-                                        int dx = wx - px, dy = wy - py ;
+                                        int px = pins[pi].x, py = pins[pi].y;
+                                        int dx = wx - px, dy = wy - py;
                                         if (dx*dx + dy*dy <= 100) {
                                             clickPoint = {px, py};
                                             foundPin = true;
                                             break;
                                         }
                                     }
-                                    if(foundPin) break;
+                                    if (foundPin) break;
                                 }
 
-                                if (!wireStartActive){
+                                if (!wireStartActive) {
                                     wireStartPoint = clickPoint;
                                     wireStartActive = true;
-                                }
-                                else {
-                                    vector<SDL_Point> path = calcOrthoPath (wireStartPoint, clickPoint);
+                                } else {
+                                    vector<SDL_Point> path = calcOrthoPath(wireStartPoint, clickPoint);
                                     UndoAction act;
-                                    act.type= WIRE_ADD;
+                                    act.type = WIRE_ADD;
                                     act.wiresBefore = wires;
+                                    act.junctionsBefore= junctions;
                                     wires.push_back(path);
                                     act.wiresAfter = wires;
-                                    pushUndo (act);
+                                    act.junctionsAfter= junctions;
+                                    pushUndo(act);
                                     wireStartActive = false;
                                 }
                                 canvasClickHandled = true;
@@ -2073,16 +2446,15 @@ public:
                                 act.type = COMP_PLACE;
                                 act.comp = pc ;
                                 act.wiresBefore = wires;
-                                placedComponents.push_back(pc);
-                                act .wiresAfter = wires;
+                                act.junctionsBefore = junctions;
+                                placedComponents.push_back (pc);
+                                act.wiresAfter = wires;
+                                act.junctionsAfter = junctions;
                                 pushUndo(act);
                             } else {
                                 bool hitComponent =false;
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
-                                    int sx = wldToScrX (placedComponents[i].x);
-                                    int sy = wldToScrY( placedComponents[i].y);
-                                    SDL_Rect compRect = { sx - 40, sy - 20, 80, 40};
-                                    if (mseX >= compRect.x && mseX < compRect.x +compRect.w && mseY >= compRect.y && mseY < compRect.y +compRect.h) {
+                                    if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY)) ) {
                                         Uint32 now = SDL_GetTicks();
                                         if (lastClickedIndex == i && (now - lastClickTime) < 400) {
                                             editingIndex = i;
@@ -2135,7 +2507,7 @@ public:
                                             dragStartX =mseX;
                                             dragStartY =mseY;
                                             preDragComponents = placedComponents;
-                                            preDragWires = wires ;
+                                            preDragWires = wires;
                                             dragSnapshots.clear();
                                             for (auto idx :selectedIndices) {
                                                 dragSnapshots.push_back(placedComponents[idx]);
@@ -2149,10 +2521,59 @@ public:
                                     if (!(SDL_GetModState() & KMOD_SHIFT)) {
                                         selectedIndices.clear() ;
                                     }
-                                    drawingSelection = true;
-                                    selectionRect = {mseX, mseY, 0, 0} ;
-                                    lastClickedIndex = -1;
-                                    lastClickTime = 0;
+                                    bool junctionToggled= false;
+                                    if (currentTool == Tool::SELECT) {
+                                        int wx = scrToWldX (mseX);
+                                        int wy = scrToWldY (mseY);
+                                        for (size_t i = 0; i < wires.size(); ++i){
+                                            for (size_t j = i+1; j < wires.size(); ++j) {
+                                                for (size_t s1 = 0; s1+1 < wires[i] .size(); ++s1) {
+                                                    for (size_t s2 = 0; s2+1 < wires[j].size(); ++s2){
+                                                        SDL_Point inter;
+                                                        if (segmentsIntersect(wires[i][s1], wires[i] [s1+1], wires[j][s2], wires[j][s2+1], inter)) {
+                                                            if (pointNear({wx, wy}, inter, 8 )) {
+                                                                bool exists = false;
+                                                                for (auto& jpt: junctions) {
+                                                                    if (pointNear(jpt, inter, 6)) { exists = true ; break; }
+                                                                }
+                                                                if(!exists) {
+                                                                    UndoAction act;
+                                                                    act.type = WIRE_JUNCTION_ADD;
+                                                                    act.junctionsBefore= junctions;
+                                                                    junctions.push_back(inter);
+                                                                    act.junctionsAfter = junctions;
+                                                                    pushUndo(act);
+                                                                }
+                                                                else {
+                                                                    for (auto it  = junctions.begin(); it != junctions.end(); ++it) {
+                                                                        if (pointNear(*it, inter, 6)){
+                                                                            UndoAction act;
+                                                                            act.type = WIRE_JUNCTION_REMOVE;
+                                                                            act. junctionsBefore = junctions;
+                                                                            act.junctionPoint = *it;
+                                                                            junctions.erase(it);
+                                                                            act.junctionsAfter = junctions;
+                                                                            pushUndo(act);
+                                                                            break ;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                junctionToggled = true;
+                                                                goto junction_done  ;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        junction_done:;
+                                    }
+                                    if (!junctionToggled){
+                                        drawingSelection = true;
+                                        selectionRect ={mseX, mseY, 0, 0} ;
+                                        lastClickedIndex = -1;
+                                        lastClickTime = 0;
+                                    }
                                 }
                             }
                         }
@@ -2220,39 +2641,41 @@ public:
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_RIGHT) {
                     if (mseX >= vpX && mseX < vpX + vpW && mseY >= vpY && mseY < vpY +vpH) {
                         bool removedWire = false;
-                        for (size_t wi = 0;wi < wires.size(); ++wi) {
-                            for (size_t si = 0; si < wires [wi].size() - 1; ++si) {
+                        for (size_t wi = 0; wi < wires.size(); ++wi) {
+                            for (size_t si = 0; si < wires[wi].size() - 1; ++si) {
                                 int x1 = wldToScrX(wires[wi][si].x);
-                                int y1 = wldToScrY(wires[wi][si].y) ;
+                                int y1 = wldToScrY(wires[wi][si].y);
                                 int x2 = wldToScrX(wires[wi][si+1].x);
                                 int y2 = wldToScrY(wires[wi][si+1].y);
-                                if (pointToSegmentDist(mseX, mseY, x1, y1, x2, y2) < 6){
+                                if (pointToSegmentDist(mseX, mseY, x1, y1, x2, y2) < 6) {
                                     UndoAction act;
-                                    act.type = WIRE_DELETE ;
+                                    act.type = WIRE_DELETE;
                                     act.wiresBefore = wires;
+                                    act.junctionsBefore = junctions ;
+                                    vector<SDL_Point> removedWireData = wires[wi];
                                     wires.erase(wires.begin() + wi);
+                                    removeJunctionsOnWire (removedWireData);
                                     act.wiresAfter = wires;
+                                    act.junctionsAfter = junctions;
                                     pushUndo(act);
                                     removedWire = true;
-                                    break ;
+                                    break;
                                 }
                             }
                             if (removedWire) break;
                         }
                         if (!removedWire) {
                             for (size_t i = 0; i < placedComponents.size(); ++i) {
-                                int sx = wldToScrX(placedComponents[i].x);
-                                int sy = wldToScrY(placedComponents[i].y);
-                                SDL_Rect compRect = { sx - 40, sy - 20, 80, 40};
-                                if (mseX >= compRect.x && mseX < compRect.x + compRect.w &&
-                                    mseY >= compRect.y && mseY < compRect.y + compRect.h) {
+                                if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))){
                                     UndoAction act;
                                     act.type =  COMP_DELETE;
                                     act.comp = placedComponents[i];
                                     act.wiresBefore = wires;
+                                    act.junctionsBefore = junctions;
                                     pushUndo(act);
                                     placedComponents.erase (placedComponents.begin() + i);
-                                    act.wiresAfter = wires ;
+                                    act.wiresAfter = wires;
+                                    act.junctionsAfter =junctions;
                                     selectedIndices.clear();
                                     if (editingIndex == i) editingIndex= -1;
                                     break;
@@ -2265,8 +2688,8 @@ public:
                 if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
                     if (draggingComponents){
                         if (dragStartX != mseX ||dragStartY != mseY){
-                            updateWiresForMovingComp();
-                            UndoAction  act;
+                            updateWiresForMovingComp () ;
+                            UndoAction act;
                             act.type = COMP_MOVE;
                             act.compsBefore= preDragComponents;
                             act.compsAfter = placedComponents;
@@ -2301,37 +2724,37 @@ public:
                     panY = panOffYst + (ev.motion.y- panStartY);
                 }
                 else if (ev.type == SDL_MOUSEMOTION) {
-                    if (draggingComponents && (ev.motion.state &SDL_BUTTON_LMASK)) {
+                    if (draggingComponents && (ev.motion.state & SDL_BUTTON_LMASK)) {
                         int deltaWX = scrToWldX(mseX) - scrToWldX(dragStartX);
-                        int deltaWY = scrToWldY(mseY) - scrToWldY(dragStartY );
+                        int deltaWY = scrToWldY(mseY) - scrToWldY(dragStartY);
                         for (size_t j = 0; j < selectedIndices.size(); ++j) {
                             size_t idx = selectedIndices[j];
-                            placedComponents[idx].x = snapToGrid(dragSnapshots [j].x + deltaWX);
-                            placedComponents[idx].y = snapToGrid(dragSnapshots [j].y + deltaWY);
+                            placedComponents[idx].x = snapToGrid(dragSnapshots[j].x + deltaWX);
+                            placedComponents[idx].y = snapToGrid(dragSnapshots[j].y + deltaWY);
                         }
-                        wires =preDragWires;
+                        wires = preDragWires;
                         vector<pair<SDL_Point, SDL_Point>> pinMappings;
-                        for (size_t j = 0; j < selectedIndices.size(); ++j){
+                        for (size_t j = 0; j < selectedIndices.size(); ++j) {
                             size_t idx = selectedIndices[j];
-                            vector<SDL_Point> oldPins = gCompPinPos (dragSnapshots[j]);
+                            vector<SDL_Point> oldPins = gCompPinPos(dragSnapshots[j]);
                             vector<SDL_Point> newPins = gCompPinPos(placedComponents[idx]);
-                            for  (size_t pi = 0; pi < oldPins.size(); ++pi) {
+                            for (size_t pi = 0; pi < oldPins.size(); ++pi) {
                                 pinMappings.push_back({oldPins[pi], newPins[pi]});
                             }
                         }
-                        for (auto& wire: wires) {
-                            if (wire.size() < 2) continue ;
+                        for (auto& wire : wires) {
+                            if (wire.size() < 2) continue;
                             SDL_Point& start = wire.front();
-                            SDL_Point& end = wire.back ();
+                            SDL_Point& end = wire.back();
                             for (const auto& mapping : pinMappings) {
-                                if (start.x == mapping.first.x && start.y== mapping.first.y) {
+                                if (start.x == mapping.first.x && start.y == mapping.first.y) {
                                     start = mapping.second;
                                     break;
                                 }
                             }
-                            for (const auto& mapping :pinMappings) {
+                            for (const auto& mapping : pinMappings) {
                                 if (end.x == mapping.first.x && end.y == mapping.first.y) {
-                                    end = mapping. second;
+                                    end = mapping.second;
                                     break;
                                 }
                             }
@@ -2345,24 +2768,23 @@ public:
                         selectionRect = {x, y, w, h};
                     }
 
-                    if (currentTool == Tool::WIRE && !draggingComponents && !drawingSelection){
-                        hoveredPinActive =false;
-                        int bestDist = 100 ;
-                        for (size_t ci = 0; ci < placedComponents.size(); ++ci){
-                            auto pins = gCompPinPos (placedComponents[ci]);
-                            for (size_t pi =0; pi < pins.size(); ++pi) {
+                    if (currentTool == Tool::WIRE && !draggingComponents && !drawingSelection) {
+                        hoveredPinActive = false;
+                        int bestDist = 100;
+                        for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
+                            auto pins = gCompPinPos(placedComponents[ci]);
+                            for (size_t pi = 0; pi < pins.size(); ++pi) {
                                 int px = pins[pi].x, py = pins[pi].y;
                                 int dx = mseX - wldToScrX(px);
                                 int dy = mseY - wldToScrY(py);
                                 int dist = dx*dx + dy*dy;
                                 if (dist < bestDist) {
-                                    bestDist =dist;
+                                    bestDist = dist;
                                     hoveredPin = {px, py};
                                     hoveredPinActive = true;
                                 }
                             }
                         }
-
                         if (bestDist >= 100) hoveredPinActive = false;
                     }
                 }
@@ -2407,8 +2829,8 @@ public:
                             if (loadProjectFromFile(chosen)) {
                                 currentProjectPath = chosen;
                                 fitWindowToCanvas() ;
+                                resetLibExpanded ();
                                 resetView();
-                                resetLibExpanded();
                                 selLibItm = "";
                                 currentTool =Tool::SELECT;
                                 SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
@@ -2452,9 +2874,11 @@ public:
                                     act.type = COMP_DELETE;
                                     act.comp = placedComponents [i];
                                     act.wiresBefore = wires;
-                                    pushUndo(act) ;
+                                    act.junctionsBefore = junctions;
+                                    pushUndo(act);
                                     placedComponents.erase(placedComponents.begin() + i);
                                     act.wiresAfter = wires;
+                                    act.junctionsAfter = junctions ;
                                     if (editingIndex == i) editingIndex = -1;
                                 }
                             }
@@ -2462,44 +2886,56 @@ public:
                         }
                         else if(ev.key.keysym.sym == SDLK_r) {
                             vector<placedComp>before = placedComponents;
-                            auto wiresBeforeRotate= wires;
+                            auto wiresBeforeRotate = wires;
+                            auto junctionsBeforeRotate = junctions ;
                             for (size_t idx : selectedIndices){
                                 placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
                             }
+                            updateWiresForTransform(before, placedComponents);
                             UndoAction act;
                             act.type = COMP_TRANSFORM ;
                             act.compsBefore = before;
                             act.compsAfter = placedComponents;
-                            act.wiresBefore= wiresBeforeRotate;
+                            act.wiresBefore = wiresBeforeRotate;
                             act.wiresAfter = wires;
+                            act.junctionsBefore= junctionsBeforeRotate;
+                            act.junctionsAfter = junctions;
                             pushUndo(act);
                         }
                         else if (ev.key.keysym.sym== SDLK_h){
                             vector <placedComp> before = placedComponents;
-                            auto wiresBeforeFlip= wires;
+                            auto wiresBeforeFlip = wires;
+                            auto junctionsBeforeFlip  = junctions;
                             for (size_t idx: selectedIndices) {
                                 placedComponents[idx].flipH = !placedComponents[idx].flipH;
                             }
+                            updateWiresForTransform(before, placedComponents);
                             UndoAction act;
                             act.type =COMP_TRANSFORM;
                             act.compsBefore = before;
                             act.compsAfter =placedComponents;
                             act.wiresBefore = wiresBeforeFlip;
                             act.wiresAfter = wires;
+                            act.junctionsBefore= junctionsBeforeFlip;
+                            act.junctionsAfter = junctions;
                             pushUndo(act);
                         }
                         else if(ev.key.keysym.sym == SDLK_v) {
                             vector<placedComp> before = placedComponents;
-                            auto wiresBeforeFlipV = wires ;
+                            auto wiresBeforeFlipV = wires;
+                            auto junctionsBeforeFlipV = junctions;
                             for (size_t idx : selectedIndices) {
-                                placedComponents[idx].flipV = !placedComponents[idx].flipV;
+                                placedComponents [idx].flipV = !placedComponents [idx].flipV;
                             }
+                            updateWiresForTransform(before, placedComponents);
                             UndoAction act;
                             act.type = COMP_TRANSFORM;
                             act.compsBefore= before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeFlipV;
                             act.wiresAfter = wires;
+                            act.junctionsBefore = junctionsBeforeFlipV;
+                            act.junctionsAfter  = junctions;
                             pushUndo(act);
                         }
                         else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym  == SDLK_KP_PLUS){
@@ -2525,6 +2961,31 @@ public:
                     }
                 }
             }
+        }
+    }
+
+    void updateWiresForTransform(const vector<placedComp>& oldComps, const vector<placedComp>& newComps){
+        for (auto& wire : wires) {
+            bool changed = false;
+            for (size_t i = 0; i < oldComps.size(); ++i) {
+                if (i>= newComps.size()) break;
+                vector<SDL_Point> oldPins = gCompPinPos(oldComps [i]);
+                vector<SDL_Point> newPins = gCompPinPos(newComps [i]);
+                for (size_t pi = 0;pi < oldPins.size(); ++pi) {
+                    if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) {
+                        wire.front() = newPins[pi];
+                        changed =true;
+                        break;
+                    }
+                    if (wire.back().x == oldPins[pi].x && wire.back().y == oldPins[pi].y) {
+                        wire.back() =newPins[pi];
+                        changed = true;
+                        break;
+                    }
+                }
+                if (changed)  break;
+            }
+            if (changed) wire = calcOrthoPath(wire.front (), wire.back());
         }
     }
 
@@ -2666,8 +3127,7 @@ public:
 
                 if (!selLibItm.empty( )) {
                     previewRect = {5, yOff+5, pnlLW-10, 60};
-                    placedComp dummy= {selLibItm,0,0,0,false,false,"",""};
-                    drawCompPreview (selLibItm, previewRect, dummy);
+                    drawCompPreviewLib(selLibItm, previewRect);
                     yOff += 70;
                 }
 
@@ -2679,7 +3139,7 @@ public:
                 activeCompsY = yOff;
                 for (size_t i=0; i<activeComps.size(); i++) {
                     SDL_Rect r = {5, yOff + (int)i*26, pnlLW-10, 20};
-                    SDL_SetRenderDrawColor(renderer, selLibItm == activeComps[i] ? 180 : 235, 230, 245, 255);
+                    SDL_SetRenderDrawColor(renderer, 235, 230, 245, 255);
                     SDL_RenderFillRect(renderer, &r);
                     SDL_SetRenderDrawColor(renderer, 150,150,150,255);
                     SDL_RenderDrawRect(renderer, &r);
@@ -2728,24 +3188,34 @@ public:
             }
 
             SDL_Rect vpRect = {vpX, vpY, vpW, vpH};
-            SDL_RenderSetClipRect (renderer, &vpRect);
+
+            int cLeft  = wldToScrX(worldMinX);
+            int cTop  = wldToScrY(worldMaxY);
+            int cRight  = wldToScrX(worldMaxX);
+            int cBottom = wldToScrY(worldMinY);
+            SDL_Rect canvasScreenRect= {cLeft, cTop, cRight - cLeft, cBottom - cTop};
+
+            SDL_Rect canvasClip;
+            SDL_IntersectRect (&vpRect, &canvasScreenRect, &canvasClip);
+            SDL_RenderSetClipRect(renderer, &canvasClip);
 
             drawGrid();
             for (size_t i = 0; i < placedComponents.size(); ++i) {
                 const auto& pc =placedComponents[i];
                 int sx = wldToScrX(pc.x);
                 int sy = wldToScrY(pc.y);
-                SDL_Rect compRect = {sx- 40, sy - 20, 80, 40};
                 bool isSelected = find(selectedIndices.begin() , selectedIndices.end(), i) != selectedIndices.end();
                 if (isSelected) {
-                    SDL_SetRenderDrawColor(renderer, 255, 255, 0, 80);
-                    SDL_RenderFillRect(renderer, &compRect );
-                    SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
-                    SDL_RenderDrawRect(renderer, &compRect);
+                    drawRotatedSelection(pc) ;
                 }
-                drawCompPreview (pc.name, compRect, pc, false) ;
+                drawCompCanvas(pc);
+                SDL_Point corners[4];
+                getCompCorners(pc, corners) ;
                 SDL_SetRenderDrawColor(renderer, 0, 0, 0, 80);
-                SDL_RenderDrawRect(renderer, &compRect);
+                SDL_Point lines [5];
+                for (int c = 0; c < 4; c++) lines[c] = corners[c];
+                lines[4] = corners[0] ;
+                SDL_RenderDrawLines(renderer, lines, 5);
                 if (!pc.label.empty()) {
                     drawTxt(pc.label, sx - 30, sy + 20, {0,0,0,255}, libFont );
                 }
@@ -2759,41 +3229,50 @@ public:
                 }
             }
 
-            if (hoveredPinActive && currentTool == Tool ::WIRE) {
+            if (hoveredPinActive && currentTool == Tool::WIRE) {
                 int hx = wldToScrX(hoveredPin.x);
                 int hy = wldToScrY(hoveredPin.y);
-                SDL_SetRenderDrawColor(renderer, 255 , 215, 0, 200);
-                for (int r = 5; r <= 7;++r) {
+                SDL_SetRenderDrawColor(renderer, 255, 215, 0, 200);
+                for (int r = 5; r <= 7; ++r) {
                     SDL_Rect dot = {hx - r, hy - r, r*2, r*2};
                     SDL_RenderDrawRect(renderer, &dot);
                 }
             }
 
             SDL_SetRenderDrawColor(renderer, 0, 120, 200, 180);
-            for (auto& wire : wires){
+            for (auto& wire : wires) {
                 for (size_t si = 0; si < wire.size() - 1; ++si) {
                     int x1 = wldToScrX(wire[si].x);
-                    int y1 = wldToScrY(wire [si].y);
+                    int y1 = wldToScrY(wire[si].y);
                     int x2 = wldToScrX(wire[si+1].x);
                     int y2 = wldToScrY(wire[si+1].y);
                     SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
                 }
             }
 
-            if (wireStartActive) {
-                int mx = snapToGrid (scrToWldX(mseX));
-                int my = snapToGrid(scrToWldY(mseY));
-                clampToCanvas(mx, my);
-                SDL_Point cur ={mx, my};
-                vector<SDL_Point> preview = calcOrthoPath(wireStartPoint, cur);
-                SDL_SetRenderDrawColor(renderer, 100, 100, 100,120);
-                for (size_t i = 0; i < preview.size() - 1; ++i) {
-                    int x1 = wldToScrX(preview[i].x), y1 = wldToScrY(preview[i].y);
-                    int x2 = wldToScrX(preview[i+1].x), y2 =wldToScrY(preview[i+1].y);
-                    SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+            for (auto& jpt : junctions){
+                int sx = wldToScrX(jpt.x);
+                int sy = wldToScrY (jpt.y);
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                for (int r = 3; r <= 4; ++r){
+                    SDL_Rect dot = {sx - r, sy - r, r*2, r*2} ;
+                    SDL_RenderFillRect(renderer, &dot);
                 }
             }
 
+            if (wireStartActive) {
+                int mx = snapToGrid(scrToWldX(mseX));
+                int my = snapToGrid(scrToWldY(mseY));
+                clampToCanvas(mx, my);
+                SDL_Point cur = {mx, my};
+                vector<SDL_Point> preview = calcOrthoPath(wireStartPoint, cur);
+                SDL_SetRenderDrawColor(renderer, 100, 100, 100, 120);
+                for (size_t i = 0; i < preview.size() - 1; ++i) {
+                    int x1 = wldToScrX(preview[i].x), y1 = wldToScrY(preview[i].y);
+                    int x2 = wldToScrX(preview[i+1].x), y2 = wldToScrY(preview[i+1].y);
+                    SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+                }
+            }
 
             if (drawingSelection && selectionRect.w > 0 && selectionRect.h > 0) {
                 SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
@@ -2804,7 +3283,12 @@ public:
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
 
-            SDL_RenderSetClipRect(renderer , nullptr);
+            SDL_RenderSetClipRect(renderer,&vpRect);
+
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderDrawRect(renderer,&canvasScreenRect);
+
+            SDL_RenderSetClipRect( renderer, nullptr);
 
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
