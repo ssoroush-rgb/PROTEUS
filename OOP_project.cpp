@@ -178,6 +178,287 @@ double DACModel::voltage() const {
     return outputVoltage;
 }
 
+struct HexLoadResult {
+    bool ok = false;
+    std::vector<std::uint8_t> image;
+    std::string error;
+    std::size_t dataRecordCount = 0;
+};
+
+class IntelHexLoader {
+public:
+    HexLoadResult loadFile(const std::string& path) const;
+    HexLoadResult parseText(const std::string& text) const;
+};
+
+static int hexDigitValue(char character) {
+    if (character >= '0' && character <= '9') return character - '0';
+    if (character >= 'A' && character <= 'F') return character - 'A' + 10;
+    if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+    return -1;
+}
+
+static bool readHexByte(const std::string& line, std::size_t position, std::uint8_t& answer) {
+    if (position + 1 >= line.size()) return false;
+
+    int first = hexDigitValue(line[position]);
+    int second = hexDigitValue(line[position + 1]);
+    if (first < 0 || second < 0) return false;
+
+    answer = static_cast<std::uint8_t>(first * 16 + second);
+    return true;
+}
+
+HexLoadResult IntelHexLoader::loadFile(const std::string& path) const {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        HexLoadResult answer;
+        answer.error = "Cannot open HEX file: " + path;
+        return answer;
+    }
+
+    std::stringstream text;
+    text << file.rdbuf();
+    return parseText(text.str());
+}
+
+HexLoadResult IntelHexLoader::parseText(const std::string& text) const {
+    HexLoadResult answer;
+    std::stringstream stream(text);
+    std::string line;
+    std::uint32_t baseAddress = 0;
+    int lineNumber = 0;
+    bool endRecordFound = false;
+
+    while (std::getline(stream, line)) {
+        lineNumber++;
+
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+
+        if (line[0] != ':') {
+            answer.error = "HEX line " + std::to_string(lineNumber) + " must start with ':'";
+            return answer;
+        }
+
+        if (line.size() < 11 || (line.size() - 1) % 2 != 0) {
+            answer.error = "Invalid HEX line length at line " + std::to_string(lineNumber);
+            return answer;
+        }
+
+        std::vector<std::uint8_t> bytes;
+        for (std::size_t i = 1; i < line.size(); i += 2) {
+            std::uint8_t value = 0;
+            if (!readHexByte(line, i, value)) {
+                answer.error = "Invalid hexadecimal character at line " + std::to_string(lineNumber);
+                return answer;
+            }
+            bytes.push_back(value);
+        }
+
+        int dataLength = bytes[0];
+        if (bytes.size() != static_cast<std::size_t>(dataLength + 5)) {
+            answer.error = "Wrong byte count at line " + std::to_string(lineNumber);
+            return answer;
+        }
+
+        int sum = 0;
+        for (std::uint8_t value : bytes) sum = (sum + value) & 255;
+        if (sum != 0) {
+            answer.error = "Checksum error at line " + std::to_string(lineNumber);
+            return answer;
+        }
+
+        std::uint16_t address = static_cast<std::uint16_t>(bytes[1] * 256 + bytes[2]);
+        std::uint8_t recordType = bytes[3];
+
+        if (recordType == 0x00) {
+            std::uint32_t realAddress = baseAddress + address;
+            std::size_t neededSize = realAddress + dataLength;
+
+            if (neededSize > 1024u * 1024u) {
+                answer.error = "HEX file is larger than 1 MB";
+                return answer;
+            }
+
+            if (answer.image.size() < neededSize) {
+                answer.image.resize(neededSize, 0);
+            }
+
+            for (int i = 0; i < dataLength; i++) {
+                answer.image[realAddress + i] = bytes[4 + i];
+            }
+            answer.dataRecordCount++;
+        }
+        else if (recordType == 0x01) {
+            endRecordFound = true;
+            break;
+        }
+        else if (recordType == 0x02) {
+            if (dataLength != 2) {
+                answer.error = "Wrong segment address record";
+                return answer;
+            }
+            baseAddress = static_cast<std::uint32_t>(bytes[4] * 256 + bytes[5]) << 4;
+        }
+        else if (recordType == 0x04) {
+            if (dataLength != 2) {
+                answer.error = "Wrong linear address record";
+                return answer;
+            }
+            baseAddress = static_cast<std::uint32_t>(bytes[4] * 256 + bytes[5]) << 16;
+        }
+        else if (recordType == 0x03 || recordType == 0x05) {
+            // Start address records are accepted but are not used in this simulator.
+        }
+        else {
+            answer.error = "Unsupported HEX record type at line " + std::to_string(lineNumber);
+            return answer;
+        }
+    }
+
+    if (!endRecordFound) {
+        answer.error = "HEX file has no EOF record";
+        return answer;
+    }
+
+    if (answer.dataRecordCount == 0) {
+        answer.error = "HEX file has no program data";
+        return answer;
+    }
+
+    answer.ok = true;
+    return answer;
+}
+
+class ProgramCounter {
+public:
+    std::size_t value() const;
+    void reset();
+    void set(std::size_t address);
+    void advance(std::size_t amount = 1);
+
+private:
+    std::size_t currentAddress = 0;
+};
+
+class RegisterFile {
+public:
+    static constexpr std::size_t Count = 8;
+
+    std::uint8_t read(std::size_t index) const;
+    void write(std::size_t index, std::uint8_t value);
+    void clear();
+
+private:
+    std::array<std::uint8_t, Count> registers{};
+};
+
+class InternalRAM {
+public:
+    explicit InternalRAM(std::size_t size = 256);
+
+    std::uint8_t read(std::size_t address) const;
+    void write(std::size_t address, std::uint8_t value);
+    void clear();
+    std::size_t size() const;
+
+private:
+    std::vector<std::uint8_t> memory;
+};
+
+std::size_t ProgramCounter::value() const {
+    return currentAddress;
+}
+
+void ProgramCounter::reset() {
+    currentAddress = 0;
+}
+
+void ProgramCounter::set(std::size_t address) {
+    currentAddress = address;
+}
+
+void ProgramCounter::advance(std::size_t amount) {
+    currentAddress += amount;
+}
+
+std::uint8_t RegisterFile::read(std::size_t index) const {
+    if (index >= registers.size()) return 0;
+    return registers[index];
+}
+
+void RegisterFile::write(std::size_t index, std::uint8_t value) {
+    if (index < registers.size()) registers[index] = value;
+}
+
+void RegisterFile::clear() {
+    registers.fill(0);
+}
+
+InternalRAM::InternalRAM(std::size_t size) {
+    if (size == 0) size = 1;
+    memory.resize(size, 0);
+}
+
+std::uint8_t InternalRAM::read(std::size_t address) const {
+    if (address >= memory.size()) return 0;
+    return memory[address];
+}
+
+void InternalRAM::write(std::size_t address, std::uint8_t value) {
+    if (address < memory.size()) memory[address] = value;
+}
+
+void InternalRAM::clear() {
+    std::fill(memory.begin(), memory.end(), 0);
+}
+
+std::size_t InternalRAM::size() const {
+    return memory.size();
+}
+
+enum class InstructionType {
+    NOP,
+    MOV_IMMEDIATE,
+    MOV_REGISTER,
+    MOV_FROM_RAM,
+    MOV_TO_RAM,
+    ADD_IMMEDIATE,
+    ADD_REGISTER,
+    JMP,
+    SETB,
+    CLR,
+    IN,
+    OUT,
+    DIR,
+    HALT,
+    UNKNOWN
+};
+
+class InstructionDecoder {
+public:
+    InstructionType decode(std::uint8_t opcode) const;
+};
+
+InstructionType InstructionDecoder::decode(std::uint8_t opcode) const {
+    if (opcode == 0x00) return InstructionType::NOP;
+    if (opcode == 0x10) return InstructionType::MOV_IMMEDIATE;
+    if (opcode == 0x11) return InstructionType::MOV_REGISTER;
+    if (opcode == 0x12) return InstructionType::MOV_FROM_RAM;
+    if (opcode == 0x13) return InstructionType::MOV_TO_RAM;
+    if (opcode == 0x20) return InstructionType::ADD_IMMEDIATE;
+    if (opcode == 0x21) return InstructionType::ADD_REGISTER;
+    if (opcode == 0x30) return InstructionType::JMP;
+    if (opcode == 0x40) return InstructionType::SETB;
+    if (opcode == 0x41) return InstructionType::CLR;
+    if (opcode == 0x50) return InstructionType::IN;
+    if (opcode == 0x51) return InstructionType::OUT;
+    if (opcode == 0x52) return InstructionType::DIR;
+    if (opcode == 0xFF) return InstructionType::HALT;
+    return InstructionType::UNKNOWN;
+}
+
 using namespace std;
 
 static bool appFileExists(const string& path) {
