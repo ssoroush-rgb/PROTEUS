@@ -25,6 +25,7 @@
 #include <utility>
 #include <array>
 
+
 class ADCModel {
 public:
     void configure(int bitCount, double delayMs);
@@ -106,6 +107,75 @@ std::uint32_t ADCModel::code() const {
 bool ADCModel::bit(int index) const {
     if (index < 0 || index >= bitCount) return false;
     return ((outputCode >> index) & 1u) == 1u;
+}
+
+class DACModel {
+public:
+    void configure(int bitCount, double delayMs);
+    void update(std::uint32_t inputCode, double vrefHigh, double vrefLow, std::uint32_t nowMs);
+
+    int bits() const;
+    double voltage() const;
+
+private:
+    int bitCount = 8;
+    double conversionDelay = 10.0;
+    double outputVoltage = 0.0;
+    double nextVoltage = 0.0;
+    std::uint32_t finishTime = 0;
+    bool conversionPending = false;
+};
+
+static int limitDacBits(int value) {
+    if (value < 2) return 2;
+    if (value > 12) return 12;
+    return value;
+}
+
+static std::uint32_t dacMaxCode(int bits) {
+    return (1u << bits) - 1u;
+}
+
+void DACModel::configure(int newBitCount, double delayMs) {
+    bitCount = limitDacBits(newBitCount);
+    conversionDelay = delayMs;
+    if (conversionDelay < 0) conversionDelay = 0;
+}
+
+void DACModel::update(std::uint32_t inputCode, double vrefHigh, double vrefLow, std::uint32_t nowMs) {
+    if (conversionPending && static_cast<std::int32_t>(nowMs - finishTime) >= 0) {
+        outputVoltage = nextVoltage;
+        conversionPending = false;
+    }
+
+    if (std::isnan(vrefHigh) || std::isnan(vrefLow)) return;
+    if (vrefHigh <= vrefLow) return;
+
+    std::uint32_t maximum = dacMaxCode(bitCount);
+    if (inputCode > maximum) inputCode = maximum;
+
+    double wantedVoltage = vrefLow;
+    wantedVoltage += (vrefHigh - vrefLow) * static_cast<double>(inputCode) / maximum;
+
+    if (!conversionPending && std::fabs(wantedVoltage - outputVoltage) < 0.000001) return;
+    if (conversionPending && std::fabs(wantedVoltage - nextVoltage) < 0.000001) return;
+
+    if (conversionDelay == 0) {
+        outputVoltage = wantedVoltage;
+        conversionPending = false;
+    } else {
+        nextVoltage = wantedVoltage;
+        finishTime = nowMs + static_cast<std::uint32_t>(conversionDelay);
+        conversionPending = true;
+    }
+}
+
+int DACModel::bits() const {
+    return bitCount;
+}
+
+double DACModel::voltage() const {
+    return outputVoltage;
 }
 
 using namespace std;
@@ -277,6 +347,24 @@ public:
 };
 
 
+class DACComponent : public Component {
+public:
+    DACComponent() : Component("DAC", "Advanced", "bits=8;delay=10") {}
+    vector<LocalPin> localPins(int inputBits) const override {
+        int count = std::max(2, std::min(12, inputBits));
+        vector<LocalPin> pins;
+        for (int bit = 0; bit < count; ++bit) {
+            int y = count == 1 ? 0 : -30 + (60 * bit) / (count - 1);
+            pins.push_back({-52, y, PinKind::INPUT});
+        }
+        pins.push_back({0, -38, PinKind::INPUT}); // Vref+
+        pins.push_back({0,  38, PinKind::INPUT}); // Vref-
+        pins.push_back({52, 0, PinKind::OUTPUT}); // Vout
+        return pins;
+    }
+};
+
+
 class ComponentLibrary {
 public:
     static const Component& get(const string& name) {
@@ -307,6 +395,7 @@ public:
         static DFlipFlopComponent dff;
 
         static ADCComponent adc;
+        static DACComponent dac;
 
         static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
         static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
@@ -331,6 +420,7 @@ public:
         if (name == "XOR Gate") return xorGate;
         if (name == "D Flip-Flop") return dff;
         if (name == "ADC") return adc;
+        if (name == "DAC") return dac;
         if (name == "NPN" || name == "Transistor") return npn;
         if (name == "PNP") return pnp;
         return generic;
@@ -783,6 +873,7 @@ private:
 
     unordered_map<int, ComponentRuntime> componentRuntime;
     unordered_map<int, ADCModel> adcModels;
+    unordered_map<int, DACModel> dacModels;
     int nextComponentId;
     vector<double> wireVoltages;
     vector<string> simulationLog;
@@ -1375,6 +1466,7 @@ private:
 
     void clearAdvancedRuntime() {
         adcModels.clear();
+        dacModels.clear();
     }
 
     bool sameVoltage(double a, double b) const {
@@ -1412,6 +1504,9 @@ private:
             componentRuntime[comp.id] = ComponentRuntime();
         if (comp.name == "ADC") {
             adcModels[comp.id].configure(comp.inputCount, comp.propagationDelayMs);
+        }
+        if (comp.name == "DAC") {
+            dacModels[comp.id].configure(comp.inputCount, comp.propagationDelayMs);
         }
     }
 
@@ -1669,6 +1764,32 @@ private:
         }
 
 
+
+// DAC: D0..DN-1, Vref+, Vref-, Vout.
+        for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
+            placedComp& comp = placedComponents[ci];
+            vector<int>& pins = componentPinNodes[ci];
+            if (comp.name != "DAC" || pins.size() < (size_t)(comp.inputCount + 3)) continue;
+            uint32_t code = 0;
+            bool defined = true;
+            for (int bit = 0; bit < comp.inputCount; ++bit) {
+                LogicLevel level = LogicStandard::fromVoltage(readVoltage(pins[(size_t)bit]));
+                if (level == LogicLevel::UNDEFINED) defined = false;
+                else if (level == LogicLevel::HIGH) code |= (1U << bit);
+            }
+            double vrefPlus = readVoltage(pins[(size_t)comp.inputCount]);
+            double vrefMinus = readVoltage(pins[(size_t)comp.inputCount + 1U]);
+            if (!defined || std::isnan(vrefPlus) || std::isnan(vrefMinus)) {
+                addSimulationWarning(warnings, "DAC digital input or reference is floating. [" +
+                    (comp.label.empty() ? comp.name : comp.label) + "]");
+            }
+            DACModel& dac = dacModels[comp.id];
+            dac.configure(comp.inputCount, comp.propagationDelayMs);
+            if (defined) dac.update(code, vrefPlus, vrefMinus, now);
+            drive(pins[(size_t)comp.inputCount + 2U], dac.voltage(), comp.name);
+        }
+
+
         // Section 6 combinational gates and edge-triggered D flip-flop.
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
@@ -1824,6 +1945,17 @@ private:
             drawTxt("Vin", toScreen(-40,-22).x, toScreen(-40,-22).y-6, {0,0,0,255}, libFont);
             drawTxt("V+", toScreen(-40,0).x, toScreen(-40,0).y-6, {0,0,0,255}, libFont);
             drawTxt("V-", toScreen(-40,22).x, toScreen(-40,22).y-6, {0,0,0,255}, libFont);
+        }
+        else if (comp.name == "DAC") {
+            drawLocalBox(42, 34, {90,40,130,255});
+            SDL_Point center = toScreen(0, 0);
+            drawTxt("DAC", center.x - 16, center.y - 12, {90,40,130,255}, libFont);
+            auto model = dacModels.find(comp.id);
+            double voltage = model == dacModels.end() ? 0.0 : model->second.voltage();
+            stringstream valueText;
+            valueText << fixed << setprecision(2) << voltage << "V";
+            drawTxt(to_string(comp.inputCount) + " bit  " + valueText.str(),
+                    center.x - 38, center.y + 5, {40,40,40,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -2812,6 +2944,7 @@ public:
         libCategories.push_back(tree("Display", {"LED","7-Segment"}));
         vector<string> advancedComponents;
         advancedComponents.push_back("ADC");
+        advancedComponents.push_back("DAC");
         if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
