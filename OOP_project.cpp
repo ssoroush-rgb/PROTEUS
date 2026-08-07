@@ -25,7 +25,6 @@
 #include <utility>
 #include <array>
 
-
 class ADCModel {
 public:
     void configure(int bitCount, double delayMs);
@@ -938,6 +937,101 @@ std::size_t ExternalMemory::size() const {
     return memory.size();
 }
 
+class LCD16x2 {
+public:
+    LCD16x2();
+
+    void clear();
+    void home();
+    void command(std::uint8_t value);
+    void writeCharacter(std::uint8_t value);
+    void sampleBus(std::uint8_t data, bool rs, bool rw, bool enable);
+
+    std::string row(int index) const;
+    int cursorRow() const;
+    int cursorColumn() const;
+
+private:
+    std::array<std::array<char, 16>, 2> screen{};
+    int currentRow = 0;
+    int currentColumn = 0;
+    bool oldEnable = false;
+};
+
+LCD16x2::LCD16x2() {
+    clear();
+}
+
+void LCD16x2::clear() {
+    for (int rowNumber = 0; rowNumber < 2; rowNumber++) {
+        screen[rowNumber].fill(' ');
+    }
+    currentRow = 0;
+    currentColumn = 0;
+}
+
+void LCD16x2::home() {
+    currentRow = 0;
+    currentColumn = 0;
+}
+
+void LCD16x2::command(std::uint8_t value) {
+    if (value == 0x01) {
+        clear();
+    }
+    else if (value == 0x02) {
+        home();
+    }
+    else if ((value & 0x80u) != 0) {
+        int address = value & 0x7F;
+        if (address >= 0x40) {
+            currentRow = 1;
+            currentColumn = address - 0x40;
+        } else {
+            currentRow = 0;
+            currentColumn = address;
+        }
+
+        if (currentColumn > 15) currentColumn = 15;
+    }
+}
+
+void LCD16x2::writeCharacter(std::uint8_t value) {
+    char character = '?';
+    if (value >= 32 && value <= 126) character = static_cast<char>(value);
+
+    screen[currentRow][currentColumn] = character;
+    currentColumn++;
+
+    if (currentColumn >= 16) {
+        currentColumn = 0;
+        currentRow++;
+        if (currentRow >= 2) currentRow = 0;
+    }
+}
+
+void LCD16x2::sampleBus(std::uint8_t data, bool rs, bool rw, bool enable) {
+    // Data is accepted when E changes from HIGH to LOW.
+    if (oldEnable && !enable && !rw) {
+        if (rs) writeCharacter(data);
+        else command(data);
+    }
+    oldEnable = enable;
+}
+
+std::string LCD16x2::row(int index) const {
+    if (index < 0 || index > 1) return "";
+    return std::string(screen[index].begin(), screen[index].end());
+}
+
+int LCD16x2::cursorRow() const {
+    return currentRow;
+}
+
+int LCD16x2::cursorColumn() const {
+    return currentColumn;
+}
+
 using namespace std;
 
 static bool appFileExists(const string& path) {
@@ -1153,6 +1247,21 @@ public:
 };
 
 
+class LCDComponent : public Component {
+public:
+    LCDComponent() : Component("LCD 16x2", "Advanced", "16x2") {}
+    vector<LocalPin> localPins(int) const override {
+        vector<LocalPin> pins;
+        for (int bit = 0; bit < 8; ++bit) pins.push_back({-68, -28 + bit * 8, PinKind::INPUT});
+        pins.push_back({68, -16, PinKind::INPUT}); // RS
+        pins.push_back({68,   0, PinKind::INPUT}); // RW
+        pins.push_back({68,  16, PinKind::INPUT}); // E
+        return pins;
+    }
+};
+
+
+
 class ComponentLibrary {
 public:
     static const Component& get(const string& name) {
@@ -1186,6 +1295,7 @@ public:
         static DACComponent dac;
         static MicrocontrollerComponent microcontroller;
         static ExternalMemoryComponent externalMemory;
+        static LCDComponent lcd;
 
         static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
         static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
@@ -1213,6 +1323,7 @@ public:
         if (name == "DAC") return dac;
         if (name == "Microcontroller") return microcontroller;
         if (name == "External Memory") return externalMemory;
+        if (name == "LCD 16x2") return lcd;
         if (name == "NPN" || name == "Transistor") return npn;
         if (name == "PNP") return pnp;
         return generic;
@@ -1670,6 +1781,7 @@ private:
     unordered_map<int, string> attemptedFirmwarePaths;
     unordered_map<int, ExternalMemory> externalMemoryModels;
     unordered_map<int, bool> externalMemoryPreviousWrite;
+    unordered_map<int, LCD16x2> lcdModels;
     int nextComponentId;
     vector<double> wireVoltages;
     vector<string> simulationLog;
@@ -2267,6 +2379,7 @@ private:
         attemptedFirmwarePaths.clear();
         externalMemoryModels.clear();
         externalMemoryPreviousWrite.clear();
+        lcdModels.clear();
     }
 
     bool sameVoltage(double a, double b) const {
@@ -2317,6 +2430,7 @@ private:
             if (it == externalMemoryModels.end()) externalMemoryModels.emplace(comp.id, ExternalMemory((size_t)size));
             else if ((int)it->second.size() != size) it->second.resize((size_t)size);
         }
+        if (comp.name == "LCD 16x2") lcdModels.try_emplace(comp.id);
     }
 
     const ComponentRuntime* findRuntime(int id) const {
@@ -2673,6 +2787,21 @@ private:
         }
 
 
+// LCD receives HD44780-like commands/data through D0..D7, RS, RW and E.
+        for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
+            placedComp& comp = placedComponents[ci];
+            vector<int>& pins = componentPinNodes[ci];
+            if (comp.name != "LCD 16x2" || pins.size() < 11) continue;
+            bool dataDefined = false;
+            uint8_t data = readDigitalByte(pins, 0, dataDefined);
+            LogicLevel rs = LogicStandard::fromVoltage(readVoltage(pins[8]));
+            LogicLevel rw = LogicStandard::fromVoltage(readVoltage(pins[9]));
+            LogicLevel enable = LogicStandard::fromVoltage(readVoltage(pins[10]));
+            if (dataDefined && rs != LogicLevel::UNDEFINED && rw != LogicLevel::UNDEFINED && enable != LogicLevel::UNDEFINED) {
+                lcdModels[comp.id].sampleBus(data, rs == LogicLevel::HIGH, rw == LogicLevel::HIGH, enable == LogicLevel::HIGH);
+            }
+        }
+
 
         // Section 6 combinational gates and edge-triggered D flip-flop.
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
@@ -2867,6 +2996,17 @@ private:
             drawTxt(sizeText, center.x - 36, center.y + 3, {40,40,40,255}, libFont);
             drawTxt("A[7:0]", toScreen(-48,0).x, toScreen(-48,0).y-6, {0,0,0,255}, libFont);
             drawTxt("D[7:0]", toScreen(16,0).x, toScreen(16,0).y-6, {0,0,0,255}, libFont);
+        }
+        else if (comp.name == "LCD 16x2") {
+            drawLocalBox(58, 32, {20,90,65,255});
+            SDL_Point topLeft = toScreen(-52, -24);
+            SDL_Point center = toScreen(0, 0);
+            auto lcd = lcdModels.find(comp.id);
+            string first = lcd == lcdModels.end() ? string(16, ' ') : lcd->second.row(0);
+            string second = lcd == lcdModels.end() ? string(16, ' ') : lcd->second.row(1);
+            drawTxt(first, topLeft.x + 5, topLeft.y + 5, {15,80,35,255}, libFont);
+            drawTxt(second, topLeft.x + 5, topLeft.y + 20, {15,80,35,255}, libFont);
+            drawTxt("LCD 16x2", center.x - 35, center.y + 22, {20,90,65,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3858,6 +3998,7 @@ public:
         advancedComponents.push_back("DAC");
         advancedComponents.push_back("Microcontroller");
         advancedComponents.push_back("External Memory");
+        advancedComponents.push_back("LCD 16x2");
         if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
