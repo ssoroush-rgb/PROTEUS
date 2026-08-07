@@ -25,6 +25,7 @@
 #include <utility>
 #include <array>
 
+
 class ADCModel {
 public:
     void configure(int bitCount, double delayMs);
@@ -896,6 +897,47 @@ std::uint64_t Microcontroller::executedInstructions() const {
     return instructionCount;
 }
 
+class ExternalMemory {
+public:
+    explicit ExternalMemory(std::size_t size = 256);
+
+    void resize(std::size_t size);
+    std::uint8_t read(std::size_t address) const;
+    void write(std::size_t address, std::uint8_t value);
+    void clear();
+    std::size_t size() const;
+
+private:
+    std::vector<std::uint8_t> memory;
+};
+
+ExternalMemory::ExternalMemory(std::size_t size) {
+    if (size == 0) size = 1;
+    memory.resize(size, 0);
+}
+
+void ExternalMemory::resize(std::size_t size) {
+    if (size == 0) size = 1;
+    memory.resize(size, 0);
+}
+
+std::uint8_t ExternalMemory::read(std::size_t address) const {
+    if (memory.empty()) return 0;
+    return memory[address % memory.size()];
+}
+
+void ExternalMemory::write(std::size_t address, std::uint8_t value) {
+    if (!memory.empty()) memory[address % memory.size()] = value;
+}
+
+void ExternalMemory::clear() {
+    std::fill(memory.begin(), memory.end(), 0);
+}
+
+std::size_t ExternalMemory::size() const {
+    return memory.size();
+}
+
 using namespace std;
 
 static bool appFileExists(const string& path) {
@@ -1096,6 +1138,21 @@ public:
 };
 
 
+class ExternalMemoryComponent : public Component {
+public:
+    ExternalMemoryComponent()
+        : Component("External Memory", "Advanced", "size=256;type=EEPROM") {}
+    vector<LocalPin> localPins(int) const override {
+        vector<LocalPin> pins;
+        for (int bit = 0; bit < 8; ++bit) pins.push_back({-62, -28 + bit * 8, PinKind::INPUT});
+        for (int bit = 0; bit < 8; ++bit) pins.push_back({ 62, -28 + bit * 8, PinKind::PASSIVE});
+        pins.push_back({-16, 42, PinKind::INPUT}); // RD
+        pins.push_back({ 16, 42, PinKind::INPUT}); // WR
+        return pins;
+    }
+};
+
+
 class ComponentLibrary {
 public:
     static const Component& get(const string& name) {
@@ -1128,6 +1185,7 @@ public:
         static ADCComponent adc;
         static DACComponent dac;
         static MicrocontrollerComponent microcontroller;
+        static ExternalMemoryComponent externalMemory;
 
         static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
         static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
@@ -1154,6 +1212,7 @@ public:
         if (name == "ADC") return adc;
         if (name == "DAC") return dac;
         if (name == "Microcontroller") return microcontroller;
+        if (name == "External Memory") return externalMemory;
         if (name == "NPN" || name == "Transistor") return npn;
         if (name == "PNP") return pnp;
         return generic;
@@ -1609,6 +1668,8 @@ private:
     unordered_map<int, DACModel> dacModels;
     unordered_map<int, Microcontroller> microcontrollerModels;
     unordered_map<int, string> attemptedFirmwarePaths;
+    unordered_map<int, ExternalMemory> externalMemoryModels;
+    unordered_map<int, bool> externalMemoryPreviousWrite;
     int nextComponentId;
     vector<double> wireVoltages;
     vector<string> simulationLog;
@@ -2204,6 +2265,8 @@ private:
         dacModels.clear();
         microcontrollerModels.clear();
         attemptedFirmwarePaths.clear();
+        externalMemoryModels.clear();
+        externalMemoryPreviousWrite.clear();
     }
 
     bool sameVoltage(double a, double b) const {
@@ -2247,6 +2310,12 @@ private:
         }
         if (comp.name == "Microcontroller") {
             microcontrollerModels[comp.id].setClockHz(std::max(0.1, parseNamedNumber(comp.value, "clock", 100.0)));
+        }
+        if (comp.name == "External Memory") {
+            int size = std::max(16, std::min(65536, parseNamedInteger(comp.value, "size", 256)));
+            auto it = externalMemoryModels.find(comp.id);
+            if (it == externalMemoryModels.end()) externalMemoryModels.emplace(comp.id, ExternalMemory((size_t)size));
+            else if ((int)it->second.size() != size) it->second.resize((size_t)size);
         }
     }
 
@@ -2578,6 +2647,33 @@ private:
         }
 
 
+// External EEPROM/RAM: A0..A7, D0..D7, RD, WR.
+        for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
+            placedComp& comp = placedComponents[ci];
+            vector<int>& pins = componentPinNodes[ci];
+            if (comp.name != "External Memory" || pins.size() < 18) continue;
+            bool addressDefined = false;
+            bool dataDefined = false;
+            uint8_t address = readDigitalByte(pins, 0, addressDefined);
+            uint8_t data = readDigitalByte(pins, 8, dataDefined);
+            LogicLevel rdLevel = LogicStandard::fromVoltage(readVoltage(pins[16]));
+            LogicLevel wrLevel = LogicStandard::fromVoltage(readVoltage(pins[17]));
+            bool rd = rdLevel == LogicLevel::HIGH;
+            bool wr = wrLevel == LogicLevel::HIGH;
+            if (rd && wr) addSimulationWarning(warnings, "External Memory RD and WR are active together.");
+            ExternalMemory& memory = externalMemoryModels[comp.id];
+            bool previousWrite = externalMemoryPreviousWrite[comp.id];
+            if (wr && !previousWrite && addressDefined && dataDefined) memory.write(address, data);
+            externalMemoryPreviousWrite[comp.id] = wr;
+            if (rd && addressDefined) {
+                uint8_t value = memory.read(address);
+                for (int bit = 0; bit < 8; ++bit)
+                    drive(pins[8U + (size_t)bit], ((value >> bit) & 1U) ? 5.0 : 0.0, "External Memory");
+            }
+        }
+
+
+
         // Section 6 combinational gates and edge-triggered D flip-flop.
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
@@ -2760,6 +2856,17 @@ private:
             }
             drawTxt("PA", toScreen(-46,0).x, toScreen(-46,0).y-6, {0,0,0,255}, libFont);
             drawTxt("PB", toScreen(34,0).x, toScreen(34,0).y-6, {0,0,0,255}, libFont);
+        }
+        else if (comp.name == "External Memory") {
+            drawLocalBox(54, 38, {100,65,20,255});
+            SDL_Point center = toScreen(0, 0);
+            drawTxt("EEPROM / RAM", center.x - 52, center.y - 16, {100,65,20,255}, libFont);
+            auto memory = externalMemoryModels.find(comp.id);
+            string sizeText = memory == externalMemoryModels.end() ? "256 bytes" :
+                              to_string(memory->second.size()) + " bytes";
+            drawTxt(sizeText, center.x - 36, center.y + 3, {40,40,40,255}, libFont);
+            drawTxt("A[7:0]", toScreen(-48,0).x, toScreen(-48,0).y-6, {0,0,0,255}, libFont);
+            drawTxt("D[7:0]", toScreen(16,0).x, toScreen(16,0).y-6, {0,0,0,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3750,6 +3857,7 @@ public:
         advancedComponents.push_back("ADC");
         advancedComponents.push_back("DAC");
         advancedComponents.push_back("Microcontroller");
+        advancedComponents.push_back("External Memory");
         if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
