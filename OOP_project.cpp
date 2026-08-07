@@ -25,6 +25,8 @@
 #include <utility>
 #include <array>
 
+
+
 class ADCModel {
 public:
     void configure(int bitCount, double delayMs);
@@ -1032,6 +1034,60 @@ int LCD16x2::cursorColumn() const {
     return currentColumn;
 }
 
+class MatrixKeypad4x4 {
+public:
+    void press(int row, int column);
+    void release();
+
+    bool pressed() const;
+    int pressedRow() const;
+    int pressedColumn() const;
+    char pressedCharacter() const;
+
+private:
+    int selectedRow = -1;
+    int selectedColumn = -1;
+};
+
+void MatrixKeypad4x4::press(int row, int column) {
+    if (row < 0) row = 0;
+    if (row > 3) row = 3;
+    if (column < 0) column = 0;
+    if (column > 3) column = 3;
+
+    selectedRow = row;
+    selectedColumn = column;
+}
+
+void MatrixKeypad4x4::release() {
+    selectedRow = -1;
+    selectedColumn = -1;
+}
+
+bool MatrixKeypad4x4::pressed() const {
+    return selectedRow >= 0 && selectedColumn >= 0;
+}
+
+int MatrixKeypad4x4::pressedRow() const {
+    return selectedRow;
+}
+
+int MatrixKeypad4x4::pressedColumn() const {
+    return selectedColumn;
+}
+
+char MatrixKeypad4x4::pressedCharacter() const {
+    static const char keys[4][4] = {
+        {'1', '2', '3', 'A'},
+        {'4', '5', '6', 'B'},
+        {'7', '8', '9', 'C'},
+        {'*', '0', '#', 'D'}
+    };
+
+    if (!pressed()) return '\0';
+    return keys[selectedRow][selectedColumn];
+}
+
 using namespace std;
 
 static bool appFileExists(const string& path) {
@@ -1261,6 +1317,17 @@ public:
 };
 
 
+class KeypadComponent : public Component {
+public:
+    KeypadComponent() : Component("Keypad 4x4", "Advanced", "4x4") {}
+    vector<LocalPin> localPins(int) const override {
+        vector<LocalPin> pins;
+        for (int row = 0; row < 4; ++row) pins.push_back({-46, -24 + row * 16, PinKind::PASSIVE});
+        for (int column = 0; column < 4; ++column) pins.push_back({46, -24 + column * 16, PinKind::PASSIVE});
+        return pins;
+    }
+};
+
 
 class ComponentLibrary {
 public:
@@ -1296,6 +1363,7 @@ public:
         static MicrocontrollerComponent microcontroller;
         static ExternalMemoryComponent externalMemory;
         static LCDComponent lcd;
+        static KeypadComponent keypad;
 
         static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
         static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
@@ -1324,6 +1392,7 @@ public:
         if (name == "Microcontroller") return microcontroller;
         if (name == "External Memory") return externalMemory;
         if (name == "LCD 16x2") return lcd;
+        if (name == "Keypad 4x4") return keypad;
         if (name == "NPN" || name == "Transistor") return npn;
         if (name == "PNP") return pnp;
         return generic;
@@ -1782,6 +1851,7 @@ private:
     unordered_map<int, ExternalMemory> externalMemoryModels;
     unordered_map<int, bool> externalMemoryPreviousWrite;
     unordered_map<int, LCD16x2> lcdModels;
+    unordered_map<int, MatrixKeypad4x4> keypadModels;
     int nextComponentId;
     vector<double> wireVoltages;
     vector<string> simulationLog;
@@ -2380,6 +2450,7 @@ private:
         externalMemoryModels.clear();
         externalMemoryPreviousWrite.clear();
         lcdModels.clear();
+        keypadModels.clear();
     }
 
     bool sameVoltage(double a, double b) const {
@@ -2431,6 +2502,7 @@ private:
             else if ((int)it->second.size() != size) it->second.resize((size_t)size);
         }
         if (comp.name == "LCD 16x2") lcdModels.try_emplace(comp.id);
+        if (comp.name == "Keypad 4x4") keypadModels.try_emplace(comp.id);
     }
 
     const ComponentRuntime* findRuntime(int id) const {
@@ -2576,6 +2648,12 @@ private:
                 auto runtimeIt = componentRuntime.find(comp.id);
                 bool pressed = comp.name == "Push Button" && runtimeIt != componentRuntime.end() && runtimeIt->second.pressed;
                 if (closed || pressed) dsu.unite(pins[0], pins[1]);
+            }
+            if (comp.name == "Keypad 4x4" && pins.size() >= 8) {
+                MatrixKeypad4x4& keypad = keypadModels[comp.id];
+                if (keypad.pressed()) {
+                    dsu.unite(pins[(size_t)keypad.pressedRow()], pins[4U + (size_t)keypad.pressedColumn()]);
+                }
             }
         }
 
@@ -3007,6 +3085,31 @@ private:
             drawTxt(first, topLeft.x + 5, topLeft.y + 5, {15,80,35,255}, libFont);
             drawTxt(second, topLeft.x + 5, topLeft.y + 20, {15,80,35,255}, libFont);
             drawTxt("LCD 16x2", center.x - 35, center.y + 22, {20,90,65,255}, libFont);
+        }
+        else if (comp.name == "Keypad 4x4") {
+            drawLocalBox(34, 34, {45,45,45,255});
+            static const char labels[4][4] = {
+                {'1','2','3','A'}, {'4','5','6','B'}, {'7','8','9','C'}, {'*','0','#','D'}
+            };
+            auto keypad = keypadModels.find(comp.id);
+            for (int row = 0; row < 4; ++row) {
+                for (int column = 0; column < 4; ++column) {
+                    int x1 = -32 + column * 16;
+                    int y1 = -32 + row * 16;
+                    SDL_Point p[5] = {
+                        toScreen(x1,y1), toScreen(x1+16,y1), toScreen(x1+16,y1+16),
+                        toScreen(x1,y1+16), toScreen(x1,y1)
+                    };
+                    SDL_SetRenderDrawColor(renderer, 80,80,80,255);
+                    SDL_RenderDrawLines(renderer, p, 5);
+                    SDL_Point c = toScreen(x1+8, y1+8);
+                    if (keypad != keypadModels.end() && keypad->second.pressed() &&
+                        keypad->second.pressedRow() == row && keypad->second.pressedColumn() == column) {
+                        drawFilledCircle(c.x, c.y, 7, {180,210,240,255});
+                    }
+                    drawTxt(string(1, labels[row][column]), c.x - 4, c.y - 7, {0,0,0,255}, libFont);
+                }
+            }
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3999,6 +4102,7 @@ public:
         advancedComponents.push_back("Microcontroller");
         advancedComponents.push_back("External Memory");
         advancedComponents.push_back("LCD 16x2");
+        advancedComponents.push_back("Keypad 4x4");
         if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
@@ -4645,6 +4749,17 @@ public:
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
                                     if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY)) ) {
                                         initializeComponent(placedComponents[i]);
+                                        if (placedComponents[i].name == "Keypad 4x4" && !(SDL_GetModState() & KMOD_ALT)) {
+                                            SDL_Point local = worldToComponentLocal(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY));
+                                            if (local.x >= -32 && local.x < 32 && local.y >= -32 && local.y < 32) {
+                                                int column = (local.x + 32) / 16;
+                                                int row = (local.y + 32) / 16;
+                                                keypadModels[placedComponents[i].id].press(row, column);
+                                            }
+                                            selectedIndices.clear(); selectedIndices.push_back(i);
+                                            hitComponent = true;
+                                            break;
+                                        }
                                         if (placedComponents[i].name == "Microcontroller" && ev.button.clicks >= 2 && !(SDL_GetModState() & KMOD_ALT)) {
                                             string firmwarePath = firmwareFileDialog();
                                             if (!firmwarePath.empty()) {
@@ -4905,6 +5020,7 @@ public:
 
                 if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
                     for (auto& runtimeItem : componentRuntime) runtimeItem.second.pressed = false;
+                    for (auto& keypadItem : keypadModels) keypadItem.second.release();
                     if (draggingComponents){
                         if (dragStartX != mseX ||dragStartY != mseY){
                             updateWiresForMovingComp () ;
