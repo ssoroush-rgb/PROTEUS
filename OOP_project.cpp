@@ -25,7 +25,6 @@
 #include <utility>
 #include <array>
 
-
 class ADCModel {
 public:
     void configure(int bitCount, double delayMs);
@@ -459,6 +458,444 @@ InstructionType InstructionDecoder::decode(std::uint8_t opcode) const {
     return InstructionType::UNKNOWN;
 }
 
+class IOPort {
+public:
+    // 1 means output and 0 means input.
+    void setDirection(std::uint8_t mask);
+    std::uint8_t direction() const;
+
+    void write(std::uint8_t value);
+    std::uint8_t outputLatch() const;
+
+    void sampleInput(std::uint8_t value);
+    std::uint8_t read() const;
+
+    void setBit(unsigned bitNumber);
+    void clearBit(unsigned bitNumber);
+    bool isOutput(unsigned bitNumber) const;
+    bool outputBit(unsigned bitNumber) const;
+
+private:
+    std::uint8_t directionMask = 0;
+    std::uint8_t outputValue = 0;
+    std::uint8_t inputValue = 0;
+};
+
+void IOPort::setDirection(std::uint8_t mask) {
+    directionMask = mask;
+}
+
+std::uint8_t IOPort::direction() const {
+    return directionMask;
+}
+
+void IOPort::write(std::uint8_t value) {
+    outputValue = value;
+}
+
+std::uint8_t IOPort::outputLatch() const {
+    return outputValue;
+}
+
+void IOPort::sampleInput(std::uint8_t value) {
+    inputValue = value;
+}
+
+std::uint8_t IOPort::read() const {
+    std::uint8_t outputs = outputValue & directionMask;
+    std::uint8_t inputs = inputValue & static_cast<std::uint8_t>(~directionMask);
+    return outputs | inputs;
+}
+
+void IOPort::setBit(unsigned bitNumber) {
+    if (bitNumber < 8) outputValue |= static_cast<std::uint8_t>(1u << bitNumber);
+}
+
+void IOPort::clearBit(unsigned bitNumber) {
+    if (bitNumber < 8) outputValue &= static_cast<std::uint8_t>(~(1u << bitNumber));
+}
+
+bool IOPort::isOutput(unsigned bitNumber) const {
+    if (bitNumber >= 8) return false;
+    return ((directionMask >> bitNumber) & 1u) == 1u;
+}
+
+bool IOPort::outputBit(unsigned bitNumber) const {
+    if (bitNumber >= 8) return false;
+    return ((outputValue >> bitNumber) & 1u) == 1u;
+}
+
+class Microcontroller {
+public:
+    Microcontroller();
+
+    bool loadFirmwareFile(const std::string& path, std::string& error);
+    bool loadFirmwareImage(const std::vector<std::uint8_t>& image, std::string& error);
+
+    void reset();
+    void setClockHz(double value);
+    double clockHz() const;
+    void samplePortInputs(std::uint8_t portAInput, std::uint8_t portBInput);
+    void tick(std::uint32_t nowMs);
+    bool step();
+
+    const ProgramCounter& pc() const;
+    const RegisterFile& registers() const;
+    const InternalRAM& ram() const;
+    const IOPort& portA() const;
+    const IOPort& portB() const;
+    IOPort& portA();
+    IOPort& portB();
+
+    bool halted() const;
+    const std::string& lastError() const;
+    const std::string& firmwarePath() const;
+    std::uint64_t executedInstructions() const;
+
+private:
+    bool enoughBytes(std::size_t count);
+    std::uint8_t getNextByte();
+    IOPort* getPort(std::uint8_t number);
+    const IOPort* getPort(std::uint8_t number) const;
+
+    IntelHexLoader hexLoader;
+    InstructionDecoder decoder;
+    std::vector<std::uint8_t> flashMemory;
+    ProgramCounter programCounter;
+    RegisterFile registerFile;
+    InternalRAM internalRam;
+    std::array<IOPort, 2> ports{};
+
+    bool isHalted = true;
+    std::string errorText;
+    std::string loadedFilePath;
+    double frequency = 100.0;
+    std::uint32_t previousTick = 0;
+    double remainingCycles = 0.0;
+    std::uint64_t instructionCount = 0;
+};
+
+Microcontroller::Microcontroller() : internalRam(256) {
+}
+
+bool Microcontroller::loadFirmwareFile(const std::string& path, std::string& error) {
+    HexLoadResult result = hexLoader.loadFile(path);
+
+    if (!result.ok) {
+        error = result.error;
+        errorText = error;
+        return false;
+    }
+
+    if (!loadFirmwareImage(result.image, error)) return false;
+    loadedFilePath = path;
+    return true;
+}
+
+bool Microcontroller::loadFirmwareImage(const std::vector<std::uint8_t>& image, std::string& error) {
+    if (image.empty()) {
+        error = "Firmware image is empty";
+        errorText = error;
+        return false;
+    }
+
+    flashMemory = image;
+    reset();
+    isHalted = false;
+    error.clear();
+    errorText.clear();
+    return true;
+}
+
+void Microcontroller::reset() {
+    programCounter.reset();
+    registerFile.clear();
+    internalRam.clear();
+    ports[0] = IOPort();
+    ports[1] = IOPort();
+
+    isHalted = flashMemory.empty();
+    errorText.clear();
+    previousTick = 0;
+    remainingCycles = 0;
+    instructionCount = 0;
+}
+
+void Microcontroller::setClockHz(double value) {
+    if (value < 0.1) value = 0.1;
+    if (value > 1000000.0) value = 1000000.0;
+    frequency = value;
+}
+
+double Microcontroller::clockHz() const {
+    return frequency;
+}
+
+void Microcontroller::samplePortInputs(std::uint8_t portAInput, std::uint8_t portBInput) {
+    ports[0].sampleInput(portAInput);
+    ports[1].sampleInput(portBInput);
+}
+
+void Microcontroller::tick(std::uint32_t nowMs) {
+    if (isHalted || flashMemory.empty()) {
+        previousTick = nowMs;
+        return;
+    }
+
+    if (previousTick == 0) {
+        previousTick = nowMs;
+        return;
+    }
+
+    std::uint32_t passedTime = nowMs - previousTick;
+    previousTick = nowMs;
+
+    remainingCycles += (passedTime / 1000.0) * frequency;
+    int steps = static_cast<int>(remainingCycles);
+
+    // Limit the work of one frame so the graphical program does not freeze.
+    if (steps > 200) steps = 200;
+    remainingCycles -= steps;
+
+    for (int i = 0; i < steps; i++) {
+        if (isHalted) break;
+        step();
+    }
+}
+
+bool Microcontroller::enoughBytes(std::size_t count) {
+    if (programCounter.value() + count <= flashMemory.size()) return true;
+
+    isHalted = true;
+    errorText = "Firmware ended in the middle of an instruction";
+    return false;
+}
+
+std::uint8_t Microcontroller::getNextByte() {
+    std::uint8_t value = flashMemory[programCounter.value()];
+    programCounter.advance();
+    return value;
+}
+
+IOPort* Microcontroller::getPort(std::uint8_t number) {
+    if (number > 1) return nullptr;
+    return &ports[number];
+}
+
+const IOPort* Microcontroller::getPort(std::uint8_t number) const {
+    if (number > 1) return nullptr;
+    return &ports[number];
+}
+
+bool Microcontroller::step() {
+    if (isHalted || flashMemory.empty()) return false;
+    if (!enoughBytes(1)) return false;
+
+    std::uint8_t operation = getNextByte();
+    InstructionType instruction = decoder.decode(operation);
+
+    switch (instruction) {
+        case InstructionType::NOP: // NOP
+            break;
+
+        case InstructionType::MOV_IMMEDIATE: { // MOV register, immediate value
+            if (!enoughBytes(2)) return false;
+            std::uint8_t reg = getNextByte();
+            std::uint8_t value = getNextByte();
+            registerFile.write(reg, value);
+            break;
+        }
+
+        case InstructionType::MOV_REGISTER: { // MOV destination register, source register
+            if (!enoughBytes(2)) return false;
+            std::uint8_t destination = getNextByte();
+            std::uint8_t source = getNextByte();
+            registerFile.write(destination, registerFile.read(source));
+            break;
+        }
+
+        case InstructionType::MOV_FROM_RAM: { // MOV register, RAM address
+            if (!enoughBytes(2)) return false;
+            std::uint8_t reg = getNextByte();
+            std::uint8_t address = getNextByte();
+            registerFile.write(reg, internalRam.read(address));
+            break;
+        }
+
+        case InstructionType::MOV_TO_RAM: { // MOV RAM address, register
+            if (!enoughBytes(2)) return false;
+            std::uint8_t address = getNextByte();
+            std::uint8_t reg = getNextByte();
+            internalRam.write(address, registerFile.read(reg));
+            break;
+        }
+
+        case InstructionType::ADD_IMMEDIATE: { // ADD register, immediate value
+            if (!enoughBytes(2)) return false;
+            std::uint8_t reg = getNextByte();
+            std::uint8_t value = getNextByte();
+            registerFile.write(reg, static_cast<std::uint8_t>(registerFile.read(reg) + value));
+            break;
+        }
+
+        case InstructionType::ADD_REGISTER: { // ADD destination register, source register
+            if (!enoughBytes(2)) return false;
+            std::uint8_t destination = getNextByte();
+            std::uint8_t source = getNextByte();
+            std::uint8_t answer = registerFile.read(destination) + registerFile.read(source);
+            registerFile.write(destination, answer);
+            break;
+        }
+
+        case InstructionType::JMP: { // JMP 16-bit address (low byte first)
+            if (!enoughBytes(2)) return false;
+            std::uint16_t low = getNextByte();
+            std::uint16_t high = getNextByte();
+            std::size_t target = low | (high << 8);
+
+            if (target >= flashMemory.size()) {
+                isHalted = true;
+                errorText = "JMP target is outside flash memory";
+                return false;
+            }
+
+            programCounter.set(target);
+            break;
+        }
+
+        case InstructionType::SETB: // SETB port, bit
+        case InstructionType::CLR: { // CLR port, bit
+            if (!enoughBytes(2)) return false;
+            std::uint8_t portNumber = getNextByte();
+            std::uint8_t bitNumber = getNextByte();
+            IOPort* selectedPort = getPort(portNumber);
+
+            if (selectedPort == nullptr || bitNumber > 7) {
+                isHalted = true;
+                errorText = "Invalid port or bit number";
+                return false;
+            }
+
+            if (instruction == InstructionType::SETB) selectedPort->setBit(bitNumber);
+            else selectedPort->clearBit(bitNumber);
+            break;
+        }
+
+        case InstructionType::IN: { // IN register, port
+            if (!enoughBytes(2)) return false;
+            std::uint8_t reg = getNextByte();
+            std::uint8_t portNumber = getNextByte();
+            const IOPort* selectedPort = getPort(portNumber);
+
+            if (selectedPort == nullptr) {
+                isHalted = true;
+                errorText = "Invalid port in IN instruction";
+                return false;
+            }
+
+            registerFile.write(reg, selectedPort->read());
+            break;
+        }
+
+        case InstructionType::OUT: { // OUT port, register
+            if (!enoughBytes(2)) return false;
+            std::uint8_t portNumber = getNextByte();
+            std::uint8_t reg = getNextByte();
+            IOPort* selectedPort = getPort(portNumber);
+
+            if (selectedPort == nullptr) {
+                isHalted = true;
+                errorText = "Invalid port in OUT instruction";
+                return false;
+            }
+
+            selectedPort->write(registerFile.read(reg));
+            break;
+        }
+
+        case InstructionType::DIR: { // DIR port, direction mask
+            if (!enoughBytes(2)) return false;
+            std::uint8_t portNumber = getNextByte();
+            std::uint8_t direction = getNextByte();
+            IOPort* selectedPort = getPort(portNumber);
+
+            if (selectedPort == nullptr) {
+                isHalted = true;
+                errorText = "Invalid port in DIR instruction";
+                return false;
+            }
+
+            selectedPort->setDirection(direction);
+            break;
+        }
+
+        case InstructionType::HALT: // HALT
+            isHalted = true;
+            break;
+
+        case InstructionType::UNKNOWN: {
+            static const char hexChars[] = "0123456789ABCDEF";
+            isHalted = true;
+            errorText = "Unknown opcode 0x";
+            errorText += hexChars[(operation >> 4) & 15];
+            errorText += hexChars[operation & 15];
+            return false;
+        }
+    }
+
+    instructionCount++;
+
+    if (programCounter.value() >= flashMemory.size() && !isHalted) {
+        isHalted = true;
+    }
+
+    return true;
+}
+
+const ProgramCounter& Microcontroller::pc() const {
+    return programCounter;
+}
+
+const RegisterFile& Microcontroller::registers() const {
+    return registerFile;
+}
+
+const InternalRAM& Microcontroller::ram() const {
+    return internalRam;
+}
+
+const IOPort& Microcontroller::portA() const {
+    return ports[0];
+}
+
+const IOPort& Microcontroller::portB() const {
+    return ports[1];
+}
+
+IOPort& Microcontroller::portA() {
+    return ports[0];
+}
+
+IOPort& Microcontroller::portB() {
+    return ports[1];
+}
+
+bool Microcontroller::halted() const {
+    return isHalted;
+}
+
+const std::string& Microcontroller::lastError() const {
+    return errorText;
+}
+
+const std::string& Microcontroller::firmwarePath() const {
+    return loadedFilePath;
+}
+
+std::uint64_t Microcontroller::executedInstructions() const {
+    return instructionCount;
+}
+
 using namespace std;
 
 static bool appFileExists(const string& path) {
@@ -646,6 +1083,19 @@ public:
 };
 
 
+class MicrocontrollerComponent : public Component {
+public:
+    MicrocontrollerComponent()
+        : Component("Microcontroller", "Advanced", "firmware=;clock=100") {}
+    vector<LocalPin> localPins(int) const override {
+        vector<LocalPin> pins;
+        for (int bit = 0; bit < 8; ++bit) pins.push_back({-58, -28 + bit * 8, PinKind::PASSIVE});
+        for (int bit = 0; bit < 8; ++bit) pins.push_back({ 58, -28 + bit * 8, PinKind::PASSIVE});
+        return pins;
+    }
+};
+
+
 class ComponentLibrary {
 public:
     static const Component& get(const string& name) {
@@ -677,6 +1127,7 @@ public:
 
         static ADCComponent adc;
         static DACComponent dac;
+        static MicrocontrollerComponent microcontroller;
 
         static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
         static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
@@ -702,6 +1153,7 @@ public:
         if (name == "D Flip-Flop") return dff;
         if (name == "ADC") return adc;
         if (name == "DAC") return dac;
+        if (name == "Microcontroller") return microcontroller;
         if (name == "NPN" || name == "Transistor") return npn;
         if (name == "PNP") return pnp;
         return generic;
@@ -1155,6 +1607,8 @@ private:
     unordered_map<int, ComponentRuntime> componentRuntime;
     unordered_map<int, ADCModel> adcModels;
     unordered_map<int, DACModel> dacModels;
+    unordered_map<int, Microcontroller> microcontrollerModels;
+    unordered_map<int, string> attemptedFirmwarePaths;
     int nextComponentId;
     vector<double> wireVoltages;
     vector<string> simulationLog;
@@ -1748,6 +2202,8 @@ private:
     void clearAdvancedRuntime() {
         adcModels.clear();
         dacModels.clear();
+        microcontrollerModels.clear();
+        attemptedFirmwarePaths.clear();
     }
 
     bool sameVoltage(double a, double b) const {
@@ -1788,6 +2244,9 @@ private:
         }
         if (comp.name == "DAC") {
             dacModels[comp.id].configure(comp.inputCount, comp.propagationDelayMs);
+        }
+        if (comp.name == "Microcontroller") {
+            microcontrollerModels[comp.id].setClockHz(std::max(0.1, parseNamedNumber(comp.value, "clock", 100.0)));
         }
     }
 
@@ -2002,6 +2461,15 @@ private:
                 double frequency = std::max(0.01, parseFirstNumber(comp.value, 1.0));
                 double phase = std::fmod((now / 1000.0) * frequency, 1.0);
                 drive(pins[0], phase < 0.5 ? 0.0 : 5.0, displayName);
+            } else if (comp.name == "Microcontroller" && pins.size() >= 16) {
+                // Publish the previous/current port latch before sampling inputs.
+                Microcontroller& mcu = microcontrollerModels[comp.id];
+                for (int bit = 0; bit < 8; ++bit) {
+                    if (mcu.portA().isOutput((unsigned)bit))
+                        drive(pins[(size_t)bit], mcu.portA().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port A");
+                    if (mcu.portB().isOutput((unsigned)bit))
+                        drive(pins[8U + (size_t)bit], mcu.portB().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port B");
+                }
             } else if (comp.name == "AND Gate" || comp.name == "OR Gate" ||
                        comp.name == "NOT Gate" || comp.name == "NAND Gate" ||
                        comp.name == "XOR Gate" || comp.name == "D Flip-Flop") {
@@ -2044,6 +2512,45 @@ private:
                 drive(pins[3U + (size_t)bit], adc.bit(bit) ? 5.0 : 0.0, comp.name);
         }
 
+
+// MCU firmware loader, object-oriented core, decoder and Port A/Port B.
+        for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
+            placedComp& comp = placedComponents[ci];
+            vector<int>& pins = componentPinNodes[ci];
+            if (comp.name != "Microcontroller" || pins.size() < 16) continue;
+            Microcontroller& mcu = microcontrollerModels[comp.id];
+            mcu.setClockHz(std::max(0.1, parseNamedNumber(comp.value, "clock", 100.0)));
+            string firmware = parseNamedString(comp.value, "firmware", "");
+            if (!firmware.empty() && attemptedFirmwarePaths[comp.id] != firmware) {
+                attemptedFirmwarePaths[comp.id] = firmware;
+                string error;
+                if (mcu.loadFirmwareFile(firmware, error)) {
+                    simulationLog.push_back("Firmware loaded: " + firmware);
+                    if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+                } else {
+                    addSimulationWarning(warnings, "Firmware error: " + error);
+                }
+            }
+
+            uint8_t inputA = 0;
+            uint8_t inputB = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                if (LogicStandard::fromVoltage(readVoltage(pins[(size_t)bit])) == LogicLevel::HIGH)
+                    inputA = (uint8_t)(inputA | (1U << bit));
+                if (LogicStandard::fromVoltage(readVoltage(pins[8U + (size_t)bit])) == LogicLevel::HIGH)
+                    inputB = (uint8_t)(inputB | (1U << bit));
+            }
+            mcu.samplePortInputs(inputA, inputB);
+            mcu.tick(now);
+            if (!mcu.lastError().empty()) addSimulationWarning(warnings, "MCU: " + mcu.lastError());
+            for (int bit = 0; bit < 8; ++bit) {
+                if (mcu.portA().isOutput((unsigned)bit))
+                    drive(pins[(size_t)bit], mcu.portA().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port A");
+                if (mcu.portB().isOutput((unsigned)bit))
+                    drive(pins[8U + (size_t)bit], mcu.portB().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port B");
+            }
+        }
+        for (int pass = 0; pass < 6; ++pass) if (!propagatePassive()) break;
 
 
 // DAC: D0..DN-1, Vref+, Vref-, Vout.
@@ -2237,6 +2744,22 @@ private:
             valueText << fixed << setprecision(2) << voltage << "V";
             drawTxt(to_string(comp.inputCount) + " bit  " + valueText.str(),
                     center.x - 38, center.y + 5, {40,40,40,255}, libFont);
+        }
+        else if (comp.name == "Microcontroller") {
+            drawLocalBox(50, 34, {25,80,45,255});
+            SDL_Point center = toScreen(0, 0);
+            drawTxt("MCU", center.x - 16, center.y - 24, {25,80,45,255}, libFont);
+            auto model = microcontrollerModels.find(comp.id);
+            if (model != microcontrollerModels.end()) {
+                drawTxt("PC=" + to_string(model->second.pc().value()), center.x - 36, center.y - 5,
+                        {30,30,30,255}, libFont);
+                drawTxt(model->second.halted() ? "HALT" : "RUN", center.x - 18, center.y + 11,
+                        model->second.halted() ? SDL_Color{180,40,40,255} : SDL_Color{20,130,50,255}, libFont);
+            } else {
+                drawTxt("No firmware", center.x - 40, center.y, {150,50,40,255}, libFont);
+            }
+            drawTxt("PA", toScreen(-46,0).x, toScreen(-46,0).y-6, {0,0,0,255}, libFont);
+            drawTxt("PB", toScreen(34,0).x, toScreen(34,0).y-6, {0,0,0,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3226,6 +3749,7 @@ public:
         vector<string> advancedComponents;
         advancedComponents.push_back("ADC");
         advancedComponents.push_back("DAC");
+        advancedComponents.push_back("Microcontroller");
         if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
@@ -3872,6 +4396,19 @@ public:
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
                                     if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY)) ) {
                                         initializeComponent(placedComponents[i]);
+                                        if (placedComponents[i].name == "Microcontroller" && ev.button.clicks >= 2 && !(SDL_GetModState() & KMOD_ALT)) {
+                                            string firmwarePath = firmwareFileDialog();
+                                            if (!firmwarePath.empty()) {
+                                                int clockHz = parseNamedInteger(placedComponents[i].value, "clock", 100);
+                                                placedComponents[i].value = "firmware=" + firmwarePath + ";clock=" + to_string(clockHz);
+                                                attemptedFirmwarePaths.erase(placedComponents[i].id);
+                                                cout << "Firmware selected: " << firmwarePath << "\n";
+                                            }
+                                            selectedIndices.clear(); selectedIndices.push_back(i);
+                                            hitComponent = true;
+                                            lastClickedIndex = -1; lastClickTime = 0;
+                                            break;
+                                        }
                                         if (placedComponents[i].name == "Push Button" && !(SDL_GetModState() & KMOD_ALT)) {
                                             componentRuntime[placedComponents[i].id].pressed = true;
                                             selectedIndices.clear(); selectedIndices.push_back(i);
