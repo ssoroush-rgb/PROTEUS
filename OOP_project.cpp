@@ -1325,6 +1325,9 @@ public:
 
         static InteractiveComponent sw("Switch", "OPEN", {{-28,0,PinKind::PASSIVE},{28,0,PinKind::PASSIVE}});
         static InteractiveComponent button("Push Button", "MOMENTARY", {{-28,0,PinKind::PASSIVE},{28,0,PinKind::PASSIVE}});
+        static InteractiveComponent dial("Potentiometer", "position=50", {
+            {-30,-16,PinKind::PASSIVE}, {-30,16,PinKind::PASSIVE}, {30,0,PinKind::OUTPUT}
+        });
 
         static DisplayComponent led("LED", "RED", {{0,-16,PinKind::PASSIVE},{0,16,PinKind::PASSIVE}});
         static DisplayComponent seven("7-Segment", "COMMON_CATHODE", {
@@ -1360,6 +1363,7 @@ public:
         if (name == "Clock Generator") return clock;
         if (name == "Switch") return sw;
         if (name == "Push Button") return button;
+        if (name == "Potentiometer") return dial;
         if (name == "LED") return led;
         if (name == "7-Segment") return seven;
         if (name == "AND Gate") return andGate;
@@ -2791,6 +2795,26 @@ private:
         };
         for (int pass = 0; pass < 6; ++pass) if (!propagatePassive()) break;
 
+        for (size_t itemIndex = 0; itemIndex < placedComponents.size(); ++itemIndex) {
+            placedComp& item = placedComponents[itemIndex];
+            vector<int>& linkedPins = componentPinLinks[itemIndex];
+            if (item.name != "Potentiometer" || linkedPins.size() < 3) continue;
+
+            double sideVoltageA = nodeVoltage(linkedPins[0]);
+            double sideVoltageB = nodeVoltage(linkedPins[1]);
+            double dialPercent = namedNumber(item.value, "position", 50.0);
+            if (dialPercent < 0.0) dialPercent = 0.0;
+            if (dialPercent > 100.0) dialPercent = 100.0;
+
+            if (!std::isnan(sideVoltageA) && !std::isnan(sideVoltageB)) {
+                double middleVoltage = sideVoltageA + (sideVoltageB - sideVoltageA) * dialPercent / 100.0;
+                driveNode(linkedPins[2], middleVoltage, item.label.empty() ? item.name : item.label);
+            } else {
+                addSimulationWarningText(warningSet, "Potentiometer end pin is floating. [" +
+                    (item.label.empty() ? item.name : item.label) + "]");
+            }
+        }
+
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
             vector<int>& pins = componentPinLinks[ci];
@@ -3307,6 +3331,32 @@ private:
             SDL_RenderDrawLine(renderer,stem1.x,stem1.y,stem2.x,stem2.y);
             drawSolidCircle(lc.x,lc.y,3,{0,0,0,255}); drawSolidCircle(rc.x,rc.y,3,{0,0,0,255});
         }
+        else if (comp.name == "Potentiometer") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto sidePinA = toScreen(-30,-16);
+            auto boxSideA = toScreen(-15,-16);
+            auto sidePinB = toScreen(-30,16);
+            auto boxSideB = toScreen(-15,16);
+            auto boxTop = toScreen(-15,-20);
+            auto boxBottom = toScreen(15,20);
+            auto outputPin = toScreen(30,0);
+            SDL_RenderDrawLine(renderer,sidePinA.x,sidePinA.y,boxSideA.x,boxSideA.y);
+            SDL_RenderDrawLine(renderer,sidePinB.x,sidePinB.y,boxSideB.x,boxSideB.y);
+            SDL_Rect dialBox = {
+                std::min(boxTop.x, boxBottom.x),
+                std::min(boxTop.y, boxBottom.y),
+                std::abs(boxBottom.x - boxTop.x),
+                std::abs(boxBottom.y - boxTop.y)
+            };
+            SDL_RenderDrawRect(renderer,&dialBox);
+            double dialPercent = namedNumber(comp.value, "position", 50.0);
+            if (dialPercent < 0.0) dialPercent = 0.0;
+            if (dialPercent > 100.0) dialPercent = 100.0;
+            int markerY = 16 - (int)std::lround(dialPercent * 32.0 / 100.0);
+            auto markerPoint = toScreen(15, markerY);
+            SDL_RenderDrawLine(renderer,markerPoint.x,markerPoint.y,outputPin.x,outputPin.y);
+            drawSolidCircle(markerPoint.x,markerPoint.y,3,{0,0,0,255});
+        }
         else if (comp.name == "Battery") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(0, -12);
@@ -3637,6 +3687,16 @@ private:
             SDL_RenderDrawLine(renderer,cx-28,cy,cx-12,cy); SDL_RenderDrawLine(renderer,cx+12,cy,cx+28,cy);
             SDL_RenderDrawLine(renderer,cx-12,cy,cx+10,cy-11);
             if (compName == "Push Button") SDL_RenderDrawLine(renderer,cx,cy-20,cx,cy-11);
+        }
+        else if (compName == "Potentiometer") {
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);
+            SDL_RenderDrawLine(renderer,cx-30,cy-16,cx-15,cy-16);
+            SDL_RenderDrawLine(renderer,cx-30,cy+16,cx-15,cy+16);
+            SDL_Rect dialPreview={cx-15,cy-20,30,40};
+            SDL_RenderDrawRect(renderer,&dialPreview);
+            SDL_RenderDrawLine(renderer,cx+15,cy,cx+30,cy);
+            SDL_Rect dialDot={cx+12,cy-3,6,6};
+            SDL_RenderFillRect(renderer,&dialDot);
         }
         else if (compName == "Battery"){
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -4124,7 +4184,7 @@ public:
 
         libCategories.push_back(tree("Sources", {"Ground","VCC","DC Voltage Source","Battery","Clock Generator"}));
         libCategories.push_back(tree("Passive", {"Resistor","Capacitor","Inductor"}));
-        libCategories.push_back(tree("Interactive", {"Switch","Push Button"}));
+        libCategories.push_back(tree("Interactive", {"Switch","Push Button","Potentiometer"}));
         libCategories.push_back(tree("Digital Logic", {"AND Gate","OR Gate","NOT Gate","NAND Gate","XOR Gate","D Flip-Flop"}));
         libCategories.push_back(tree("Display", {"LED","7-Segment"}));
         vector<string> advancedComponentNames;
@@ -5187,18 +5247,35 @@ public:
                     }
                 }
                 if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY >=vpY && mseY<vpY+vpH){
-                    int mx = mseX, my = mseY;
-                    float oldZm =zmLvl;
-                    if (ev.wheel.y >0)
-                        zmLvl *= 1.1f;
-                    else if (ev.wheel.y < 0)
-                        zmLvl /= 1.1f ;
-                    if (zmLvl< 0.2f)
-                        zmLvl = 0.2f;
-                    if (zmLvl > 5.0f)
-                        zmLvl = 5.0f;
-                    panX = (mx - vpX) - (int)(((mx - vpX) - panX) *(zmLvl / oldZm));
-                    panY = (my - vpY) - (int)(((my - vpY) - panY) *(zmLvl / oldZm));
+                    bool dialAdjusted = false;
+                    if (simulationStatus != SimulationState::STOPPED && selectedIndices.size() == 1) {
+                        size_t selectedItem = selectedIndices[0];
+                        if (selectedItem < placedComponents.size() &&
+                            placedComponents[selectedItem].name == "Potentiometer" &&
+                            isPointInsideComponent(placedComponents[selectedItem], scrToWldX(mseX), scrToWldY(mseY))) {
+                            double dialPercent = namedNumber(placedComponents[selectedItem].value, "position", 50.0);
+                            dialPercent += ev.wheel.y * 5.0;
+                            if (dialPercent < 0.0) dialPercent = 0.0;
+                            if (dialPercent > 100.0) dialPercent = 100.0;
+                            placedComponents[selectedItem].value = "position=" + to_string((int)std::lround(dialPercent));
+                            dialAdjusted = true;
+                        }
+                    }
+
+                    if (!dialAdjusted) {
+                        int cursorX = mseX, cursorY = mseY;
+                        float previousZoom = zmLvl;
+                        if (ev.wheel.y >0)
+                            zmLvl *= 1.1f;
+                        else if (ev.wheel.y < 0)
+                            zmLvl /= 1.1f ;
+                        if (zmLvl< 0.2f)
+                            zmLvl = 0.2f;
+                        if (zmLvl > 5.0f)
+                            zmLvl = 5.0f;
+                        panX = (cursorX - vpX) - (int)(((cursorX - vpX) - panX) *(zmLvl / previousZoom));
+                        panY = (cursorY - vpY) - (int)(((cursorY - vpY) - panY) *(zmLvl / previousZoom));
+                    }
                 }
 
                 if (showProp && editingIndex < placedComponents.size( )) {
