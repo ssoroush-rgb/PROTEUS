@@ -27,391 +27,391 @@
 
 class ADCModel {
 public:
-    void configure(int bitCount, double delayMs);
-    void update(double inputVoltage, double vrefHigh, double vrefLow, std::uint32_t nowMs);
+    void setupModel(int bitCountValue, double delayValue);
+    void updateModel(double inputVoltageValue, double highReference, double lowReference, std::uint32_t currentMs);
 
-    int bits() const;
-    std::uint32_t code() const;
-    bool bit(int index) const;
+    int getBitCount() const;
+    std::uint32_t getCodeValue() const;
+    bool readBit(int index) const;
 
 private:
-    int bitCount = 8;
-    double conversionDelay = 10.0;
-    std::uint32_t outputCode = 0;
-    std::uint32_t nextCode = 0;
-    std::uint32_t finishTime = 0;
-    bool conversionPending = false;
+    int bitCountValue = 8;
+    double convertDelay = 10.0;
+    std::uint32_t adcCode = 0;
+    std::uint32_t nextAdcCode = 0;
+    std::uint32_t finishAt = 0;
+    bool conversionActive = false;
 };
 
-static int limitAdcBits(int value) {
+static int clampAdcBits(int value) {
     if (value < 2) return 2;
     if (value > 12) return 12;
     return value;
 }
 
-static std::uint32_t adcMaxCode(int bits) {
-    return (1u << bits) - 1u;
+static std::uint32_t maxAdcCode(int bitCountTemp) {
+    return (1u << bitCountTemp) - 1u;
 }
 
-void ADCModel::configure(int newBitCount, double delayMs) {
-    bitCount = limitAdcBits(newBitCount);
-    conversionDelay = delayMs;
-    if (conversionDelay < 0) conversionDelay = 0;
+void ADCModel::setupModel(int newBitCountValue, double delayValue) {
+    bitCountValue = clampAdcBits(newBitCountValue);
+    convertDelay = delayValue;
+    if (convertDelay < 0) convertDelay = 0;
 
-    outputCode = outputCode & adcMaxCode(bitCount);
-    nextCode = nextCode & adcMaxCode(bitCount);
+    adcCode = adcCode & maxAdcCode(bitCountValue);
+    nextAdcCode = nextAdcCode & maxAdcCode(bitCountValue);
 }
 
-void ADCModel::update(double inputVoltage, double vrefHigh, double vrefLow, std::uint32_t nowMs) {
-    if (conversionPending && static_cast<std::int32_t>(nowMs - finishTime) >= 0) {
-        outputCode = nextCode;
-        conversionPending = false;
+void ADCModel::updateModel(double inputVoltageValue, double highReference, double lowReference, std::uint32_t currentMs) {
+
+    if (conversionActive && static_cast<std::int32_t>(currentMs - finishAt) >= 0) {
+        adcCode = nextAdcCode;
+        conversionActive = false;
     }
 
-    if (std::isnan(inputVoltage) || std::isnan(vrefHigh) || std::isnan(vrefLow)) return;
-    if (vrefHigh <= vrefLow) return;
+    if (std::isnan(inputVoltageValue) || std::isnan(highReference) || std::isnan(lowReference)) return;
+    if (highReference <= lowReference) return;
 
-    double voltage = inputVoltage;
-    if (voltage < vrefLow) voltage = vrefLow;
-    if (voltage > vrefHigh) voltage = vrefHigh;
+    double voltage = inputVoltageValue;
+    if (voltage < lowReference) voltage = lowReference;
+    if (voltage > highReference) voltage = highReference;
 
-    double ratio = (voltage - vrefLow) / (vrefHigh - vrefLow);
-    std::uint32_t wantedCode = static_cast<std::uint32_t>(
-        std::round(ratio * adcMaxCode(bitCount))
+    double ratio = (voltage - lowReference) / (highReference - lowReference);
+    std::uint32_t newCode = static_cast<std::uint32_t>(
+        std::round(ratio * maxAdcCode(bitCountValue))
     );
 
-    if (!conversionPending && wantedCode == outputCode) return;
-    if (conversionPending && wantedCode == nextCode) return;
+    if (!conversionActive && newCode == adcCode) return;
+    if (conversionActive && newCode == nextAdcCode) return;
 
-    if (conversionDelay == 0) {
-        outputCode = wantedCode;
-        conversionPending = false;
+    if (convertDelay == 0) {
+        adcCode = newCode;
+        conversionActive = false;
     } else {
-        nextCode = wantedCode;
-        finishTime = nowMs + static_cast<std::uint32_t>(conversionDelay);
-        conversionPending = true;
+        nextAdcCode = newCode;
+        finishAt = currentMs + static_cast<std::uint32_t>(convertDelay);
+        conversionActive = true;
     }
 }
 
-int ADCModel::bits() const {
-    return bitCount;
+int ADCModel::getBitCount() const {
+    return bitCountValue;
 }
 
-std::uint32_t ADCModel::code() const {
-    return outputCode;
+std::uint32_t ADCModel::getCodeValue() const {
+    return adcCode;
 }
 
-bool ADCModel::bit(int index) const {
-    if (index < 0 || index >= bitCount) return false;
-    return ((outputCode >> index) & 1u) == 1u;
+bool ADCModel::readBit(int index) const {
+    if (index < 0 || index >= bitCountValue) return false;
+    return ((adcCode >> index) & 1u) == 1u;
 }
 
 class DACModel {
 public:
-    void configure(int bitCount, double delayMs);
-    void update(std::uint32_t inputCode, double vrefHigh, double vrefLow, std::uint32_t nowMs);
+    void setupModel(int bitCountValue, double delayValue);
+    void updateModel(std::uint32_t inputDigitalCode, double highReference, double lowReference, std::uint32_t currentMs);
 
-    int bits() const;
-    double voltage() const;
+    int getBitCount() const;
+    double getVoltage() const;
 
 private:
-    int bitCount = 8;
-    double conversionDelay = 10.0;
-    double outputVoltage = 0.0;
-    double nextVoltage = 0.0;
-    std::uint32_t finishTime = 0;
-    bool conversionPending = false;
+    int bitCountValue = 8;
+    double convertDelay = 10.0;
+    double outputVoltageValue = 0.0;
+    double nextVoltageValue = 0.0;
+    std::uint32_t finishAt = 0;
+    bool conversionActive = false;
 };
 
-static int limitDacBits(int value) {
+static int clampDacBits(int value) {
     if (value < 2) return 2;
     if (value > 12) return 12;
     return value;
 }
 
-static std::uint32_t dacMaxCode(int bits) {
-    return (1u << bits) - 1u;
+static std::uint32_t maxDacCode(int bitCountTemp) {
+    return (1u << bitCountTemp) - 1u;
 }
 
-void DACModel::configure(int newBitCount, double delayMs) {
-    bitCount = limitDacBits(newBitCount);
-    conversionDelay = delayMs;
-    if (conversionDelay < 0) conversionDelay = 0;
+void DACModel::setupModel(int newBitCountValue, double delayValue) {
+    bitCountValue = clampDacBits(newBitCountValue);
+    convertDelay = delayValue;
+    if (convertDelay < 0) convertDelay = 0;
 }
 
-void DACModel::update(std::uint32_t inputCode, double vrefHigh, double vrefLow, std::uint32_t nowMs) {
-    if (conversionPending && static_cast<std::int32_t>(nowMs - finishTime) >= 0) {
-        outputVoltage = nextVoltage;
-        conversionPending = false;
+void DACModel::updateModel(std::uint32_t inputDigitalCode, double highReference, double lowReference, std::uint32_t currentMs) {
+    if (conversionActive && static_cast<std::int32_t>(currentMs - finishAt) >= 0) {
+        outputVoltageValue = nextVoltageValue;
+        conversionActive = false;
     }
 
-    if (std::isnan(vrefHigh) || std::isnan(vrefLow)) return;
-    if (vrefHigh <= vrefLow) return;
+    if (std::isnan(highReference) || std::isnan(lowReference)) return;
+    if (highReference <= lowReference) return;
 
-    std::uint32_t maximum = dacMaxCode(bitCount);
-    if (inputCode > maximum) inputCode = maximum;
+    std::uint32_t maximum = maxDacCode(bitCountValue);
+    if (inputDigitalCode > maximum) inputDigitalCode = maximum;
 
-    double wantedVoltage = vrefLow;
-    wantedVoltage += (vrefHigh - vrefLow) * static_cast<double>(inputCode) / maximum;
+    double newVoltage = lowReference;
+    newVoltage += (highReference - lowReference) * static_cast<double>(inputDigitalCode) / maximum;
 
-    if (!conversionPending && std::fabs(wantedVoltage - outputVoltage) < 0.000001) return;
-    if (conversionPending && std::fabs(wantedVoltage - nextVoltage) < 0.000001) return;
+    if (!conversionActive && std::fabs(newVoltage - outputVoltageValue) < 0.000001) return;
+    if (conversionActive && std::fabs(newVoltage - nextVoltageValue) < 0.000001) return;
 
-    if (conversionDelay == 0) {
-        outputVoltage = wantedVoltage;
-        conversionPending = false;
+    if (convertDelay == 0) {
+        outputVoltageValue = newVoltage;
+        conversionActive = false;
     } else {
-        nextVoltage = wantedVoltage;
-        finishTime = nowMs + static_cast<std::uint32_t>(conversionDelay);
-        conversionPending = true;
+        nextVoltageValue = newVoltage;
+        finishAt = currentMs + static_cast<std::uint32_t>(convertDelay);
+        conversionActive = true;
     }
 }
 
-int DACModel::bits() const {
-    return bitCount;
+int DACModel::getBitCount() const {
+    return bitCountValue;
 }
 
-double DACModel::voltage() const {
-    return outputVoltage;
+double DACModel::getVoltage() const {
+    return outputVoltageValue;
 }
 
 struct HexLoadResult {
     bool ok = false;
-    std::vector<std::uint8_t> image;
-    std::string error;
-    std::size_t dataRecordCount = 0;
+    std::vector<std::uint8_t> hexImage;
+    std::string errorMessage;
+    std::size_t recordCount = 0;
 };
 
 class IntelHexLoader {
 public:
-    HexLoadResult loadFile(const std::string& path) const;
-    HexLoadResult parseText(const std::string& text) const;
+    HexLoadResult openHexFile(const std::string& path) const;
+    HexLoadResult parseHexData(const std::string& text) const;
 };
 
-static int hexDigitValue(char character) {
-    if (character >= '0' && character <= '9') return character - '0';
-    if (character >= 'A' && character <= 'F') return character - 'A' + 10;
-    if (character >= 'a' && character <= 'f') return character - 'a' + 10;
+static int hexDigitToInt(char currentChar) {
+    if (currentChar >= '0' && currentChar <= '9') return currentChar - '0';
+    if (currentChar >= 'A' && currentChar <= 'F') return currentChar - 'A' + 10;
+    if (currentChar >= 'a' && currentChar <= 'f') return currentChar - 'a' + 10;
     return -1;
 }
 
-static bool readHexByte(const std::string& line, std::size_t position, std::uint8_t& answer) {
+static bool readHexPair(const std::string& line, std::size_t position, std::uint8_t& result) {
     if (position + 1 >= line.size()) return false;
 
-    int first = hexDigitValue(line[position]);
-    int second = hexDigitValue(line[position + 1]);
+    int first = hexDigitToInt(line[position]);
+    int second = hexDigitToInt(line[position + 1]);
     if (first < 0 || second < 0) return false;
 
-    answer = static_cast<std::uint8_t>(first * 16 + second);
+    result = static_cast<std::uint8_t>(first * 16 + second);
     return true;
 }
 
-HexLoadResult IntelHexLoader::loadFile(const std::string& path) const {
+HexLoadResult IntelHexLoader::openHexFile(const std::string& path) const {
     std::ifstream file(path);
     if (!file.is_open()) {
-        HexLoadResult answer;
-        answer.error = "Cannot open HEX file: " + path;
-        return answer;
+        HexLoadResult result;
+        result.errorMessage = "Cannot open HEX file: " + path;
+        return result;
     }
 
     std::stringstream text;
     text << file.rdbuf();
-    return parseText(text.str());
+    return parseHexData(text.str());
 }
 
-HexLoadResult IntelHexLoader::parseText(const std::string& text) const {
-    HexLoadResult answer;
+HexLoadResult IntelHexLoader::parseHexData(const std::string& text) const {
+    HexLoadResult result;
     std::stringstream stream(text);
     std::string line;
     std::uint32_t baseAddress = 0;
-    int lineNumber = 0;
+    int lineIndex = 0;
     bool endRecordFound = false;
 
     while (std::getline(stream, line)) {
-        lineNumber++;
+        lineIndex++;
 
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
 
         if (line[0] != ':') {
-            answer.error = "HEX line " + std::to_string(lineNumber) + " must start with ':'";
-            return answer;
+            result.errorMessage = "HEX line " + std::to_string(lineIndex) + " must start with ':'";
+            return result;
         }
 
         if (line.size() < 11 || (line.size() - 1) % 2 != 0) {
-            answer.error = "Invalid HEX line length at line " + std::to_string(lineNumber);
-            return answer;
+            result.errorMessage = "Invalid HEX line length at line " + std::to_string(lineIndex);
+            return result;
         }
 
-        std::vector<std::uint8_t> bytes;
+        std::vector<std::uint8_t> byteList;
         for (std::size_t i = 1; i < line.size(); i += 2) {
             std::uint8_t value = 0;
-            if (!readHexByte(line, i, value)) {
-                answer.error = "Invalid hexadecimal character at line " + std::to_string(lineNumber);
-                return answer;
+            if (!readHexPair(line, i, value)) {
+                result.errorMessage = "Invalid hexadecimal character at line " + std::to_string(lineIndex);
+                return result;
             }
-            bytes.push_back(value);
+            byteList.push_back(value);
         }
 
-        int dataLength = bytes[0];
-        if (bytes.size() != static_cast<std::size_t>(dataLength + 5)) {
-            answer.error = "Wrong byte count at line " + std::to_string(lineNumber);
-            return answer;
+        int recordLength = byteList[0];
+        if (byteList.size() != static_cast<std::size_t>(recordLength + 5)) {
+            result.errorMessage = "Wrong byte count at line " + std::to_string(lineIndex);
+            return result;
         }
 
         int sum = 0;
-        for (std::uint8_t value : bytes) sum = (sum + value) & 255;
+        for (std::uint8_t value : byteList) sum = (sum + value) & 255;
         if (sum != 0) {
-            answer.error = "Checksum error at line " + std::to_string(lineNumber);
-            return answer;
+            result.errorMessage = "Checksum error at line " + std::to_string(lineIndex);
+            return result;
         }
 
-        std::uint16_t address = static_cast<std::uint16_t>(bytes[1] * 256 + bytes[2]);
-        std::uint8_t recordType = bytes[3];
+        std::uint16_t memoryAddress = static_cast<std::uint16_t>(byteList[1] * 256 + byteList[2]);
+        std::uint8_t recordTypeValue = byteList[3];
 
-        if (recordType == 0x00) {
-            std::uint32_t realAddress = baseAddress + address;
-            std::size_t neededSize = realAddress + dataLength;
+        if (recordTypeValue == 0x00) {
+            std::uint32_t realAddress = baseAddress + memoryAddress;
+            std::size_t newSize = realAddress + recordLength;
 
-            if (neededSize > 1024u * 1024u) {
-                answer.error = "HEX file is larger than 1 MB";
-                return answer;
+            if (newSize > 1024u * 1024u) {
+                result.errorMessage = "HEX file is larger than 1 MB";
+                return result;
             }
 
-            if (answer.image.size() < neededSize) {
-                answer.image.resize(neededSize, 0);
+            if (result.hexImage.size() < newSize) {
+                result.hexImage.resize(newSize, 0);
             }
 
-            for (int i = 0; i < dataLength; i++) {
-                answer.image[realAddress + i] = bytes[4 + i];
+            for (int i = 0; i < recordLength; i++) {
+                result.hexImage[realAddress + i] = byteList[4 + i];
             }
-            answer.dataRecordCount++;
+            result.recordCount++;
         }
-        else if (recordType == 0x01) {
+        else if (recordTypeValue == 0x01) {
             endRecordFound = true;
             break;
         }
-        else if (recordType == 0x02) {
-            if (dataLength != 2) {
-                answer.error = "Wrong segment address record";
-                return answer;
+        else if (recordTypeValue == 0x02) {
+            if (recordLength != 2) {
+                result.errorMessage = "Wrong segment address record";
+                return result;
             }
-            baseAddress = static_cast<std::uint32_t>(bytes[4] * 256 + bytes[5]) << 4;
+            baseAddress = static_cast<std::uint32_t>(byteList[4] * 256 + byteList[5]) << 4;
         }
-        else if (recordType == 0x04) {
-            if (dataLength != 2) {
-                answer.error = "Wrong linear address record";
-                return answer;
+        else if (recordTypeValue == 0x04) {
+            if (recordLength != 2) {
+                result.errorMessage = "Wrong linear address record";
+                return result;
             }
-            baseAddress = static_cast<std::uint32_t>(bytes[4] * 256 + bytes[5]) << 16;
+            baseAddress = static_cast<std::uint32_t>(byteList[4] * 256 + byteList[5]) << 16;
         }
-        else if (recordType == 0x03 || recordType == 0x05) {
+        else if (recordTypeValue == 0x03 || recordTypeValue == 0x05) {
+
         }
         else {
-            answer.error = "Unsupported HEX record type at line " + std::to_string(lineNumber);
-            return answer;
+            result.errorMessage = "Unsupported HEX record type at line " + std::to_string(lineIndex);
+            return result;
         }
     }
 
     if (!endRecordFound) {
-        answer.error = "HEX file has no EOF record";
-        return answer;
+        result.errorMessage = "HEX file has no EOF record";
+        return result;
     }
 
-    if (answer.dataRecordCount == 0) {
-        answer.error = "HEX file has no program data";
-        return answer;
+    if (result.recordCount == 0) {
+        result.errorMessage = "HEX file has no program data";
+        return result;
     }
 
-    answer.ok = true;
-    return answer;
+    result.ok = true;
+    return result;
 }
 
 class ProgramCounter {
 public:
-    std::size_t value() const;
-    void reset();
-    void set(std::size_t address);
-    void advance(std::size_t amount = 1);
+    std::size_t getCounterValue() const;
+    void resetCpuState();
+    void setCounterValue(std::size_t memoryAddress);
+    void advanceCounter(std::size_t amount = 1);
 
 private:
-    std::size_t currentAddress = 0;
+    std::size_t currentPcAddress = 0;
 };
 
 class RegisterFile {
 public:
     static constexpr std::size_t Count = 8;
 
-    std::uint8_t read(std::size_t index) const;
-    void write(std::size_t index, std::uint8_t value);
-    void clear();
-
+    std::uint8_t readData(std::size_t index) const;
+    void writeData(std::size_t index, std::uint8_t value);
+    void clearRegisters();
 private:
-    std::array<std::uint8_t, Count> registers{};
+    std::array<std::uint8_t, Count> registerView{};
 };
 
 class InternalRAM {
 public:
     explicit InternalRAM(std::size_t size = 256);
 
-    std::uint8_t read(std::size_t address) const;
-    void write(std::size_t address, std::uint8_t value);
-    void clear();
-    std::size_t size() const;
-
+    std::uint8_t readData(std::size_t memoryAddress) const;
+    void writeData(std::size_t memoryAddress, std::uint8_t value);
+    void clearRam();
+    std::size_t getRamSize() const;
 private:
-    std::vector<std::uint8_t> memory;
+    std::vector<std::uint8_t> memoryData;
 };
 
-std::size_t ProgramCounter::value() const {
-    return currentAddress;
+std::size_t ProgramCounter::getCounterValue() const {
+    return currentPcAddress;
 }
 
-void ProgramCounter::reset() {
-    currentAddress = 0;
+void ProgramCounter::resetCpuState() {
+    currentPcAddress = 0;
 }
 
-void ProgramCounter::set(std::size_t address) {
-    currentAddress = address;
+void ProgramCounter::setCounterValue(std::size_t memoryAddress) {
+    currentPcAddress = memoryAddress;
 }
 
-void ProgramCounter::advance(std::size_t amount) {
-    currentAddress += amount;
+void ProgramCounter::advanceCounter(std::size_t amount) {
+    currentPcAddress += amount;
 }
 
-std::uint8_t RegisterFile::read(std::size_t index) const {
-    if (index >= registers.size()) return 0;
-    return registers[index];
+std::uint8_t RegisterFile::readData(std::size_t index) const {
+    if (index >= registerView.size()) return 0;
+    return registerView[index];
 }
 
-void RegisterFile::write(std::size_t index, std::uint8_t value) {
-    if (index < registers.size()) registers[index] = value;
+void RegisterFile::writeData(std::size_t index, std::uint8_t value) {
+    if (index < registerView.size()) registerView[index] = value;
 }
 
-void RegisterFile::clear() {
-    registers.fill(0);
+void RegisterFile::clearRegisters() {
+    registerView.fill(0);
 }
 
 InternalRAM::InternalRAM(std::size_t size) {
     if (size == 0) size = 1;
-    memory.resize(size, 0);
+    memoryData.resize(size, 0);
 }
 
-std::uint8_t InternalRAM::read(std::size_t address) const {
-    if (address >= memory.size()) return 0;
-    return memory[address];
+std::uint8_t InternalRAM::readData(std::size_t memoryAddress) const {
+    if (memoryAddress >= memoryData.size()) return 0;
+    return memoryData[memoryAddress];
 }
 
-void InternalRAM::write(std::size_t address, std::uint8_t value) {
-    if (address < memory.size()) memory[address] = value;
+void InternalRAM::writeData(std::size_t memoryAddress, std::uint8_t value) {
+    if (memoryAddress < memoryData.size()) memoryData[memoryAddress] = value;
 }
 
-void InternalRAM::clear() {
-    std::fill(memory.begin(), memory.end(), 0);
+void InternalRAM::clearRam() {
+    std::fill(memoryData.begin(), memoryData.end(), 0);
 }
 
-std::size_t InternalRAM::size() const {
-    return memory.size();
+std::size_t InternalRAM::getRamSize() const {
+    return memoryData.size();
 }
 
 enum class InstructionType {
@@ -425,8 +425,8 @@ enum class InstructionType {
     JMP,
     SETB,
     CLR,
-    IN,
-    OUT,
+    INPUT_OP,
+    OUTPUT_OP,
     DIR,
     HALT,
     UNKNOWN
@@ -434,642 +434,641 @@ enum class InstructionType {
 
 class InstructionDecoder {
 public:
-    InstructionType decode(std::uint8_t opcode) const;
+    InstructionType decodeInstruction(std::uint8_t opcodeValue) const;
 };
 
-InstructionType InstructionDecoder::decode(std::uint8_t opcode) const {
-    if (opcode == 0x00) return InstructionType::NOP;
-    if (opcode == 0x10) return InstructionType::MOV_IMMEDIATE;
-    if (opcode == 0x11) return InstructionType::MOV_REGISTER;
-    if (opcode == 0x12) return InstructionType::MOV_FROM_RAM;
-    if (opcode == 0x13) return InstructionType::MOV_TO_RAM;
-    if (opcode == 0x20) return InstructionType::ADD_IMMEDIATE;
-    if (opcode == 0x21) return InstructionType::ADD_REGISTER;
-    if (opcode == 0x30) return InstructionType::JMP;
-    if (opcode == 0x40) return InstructionType::SETB;
-    if (opcode == 0x41) return InstructionType::CLR;
-    if (opcode == 0x50) return InstructionType::IN;
-    if (opcode == 0x51) return InstructionType::OUT;
-    if (opcode == 0x52) return InstructionType::DIR;
-    if (opcode == 0xFF) return InstructionType::HALT;
+InstructionType InstructionDecoder::decodeInstruction(std::uint8_t opcodeValue) const {
+    if (opcodeValue == 0x00) return InstructionType::NOP;
+    if (opcodeValue == 0x10) return InstructionType::MOV_IMMEDIATE;
+    if (opcodeValue == 0x11) return InstructionType::MOV_REGISTER;
+    if (opcodeValue == 0x12) return InstructionType::MOV_FROM_RAM;
+    if (opcodeValue == 0x13) return InstructionType::MOV_TO_RAM;
+    if (opcodeValue == 0x20) return InstructionType::ADD_IMMEDIATE;
+    if (opcodeValue == 0x21) return InstructionType::ADD_REGISTER;
+    if (opcodeValue == 0x30) return InstructionType::JMP;
+    if (opcodeValue == 0x40) return InstructionType::SETB;
+    if (opcodeValue == 0x41) return InstructionType::CLR;
+    if (opcodeValue == 0x50) return InstructionType::INPUT_OP;
+    if (opcodeValue == 0x51) return InstructionType::OUTPUT_OP;
+    if (opcodeValue == 0x52) return InstructionType::DIR;
+    if (opcodeValue == 0xFF) return InstructionType::HALT;
     return InstructionType::UNKNOWN;
 }
 
 class IOPort {
 public:
 
-    void setDirection(std::uint8_t mask);
-    std::uint8_t direction() const;
+    void setIoDirection(std::uint8_t mask);
+    std::uint8_t getIoDirection() const;
 
-    void write(std::uint8_t value);
-    std::uint8_t outputLatch() const;
+    void writeData(std::uint8_t value);
+    std::uint8_t getOutputLatch() const;
 
-    void sampleInput(std::uint8_t value);
-    std::uint8_t read() const;
+    void sampleInputValue(std::uint8_t value);
+    std::uint8_t readData() const;
 
-    void setBit(unsigned bitNumber);
-    void clearBit(unsigned bitNumber);
-    bool isOutput(unsigned bitNumber) const;
-    bool outputBit(unsigned bitNumber) const;
+    void setPortBit(unsigned bitIndex);
+    void clearPortBit(unsigned bitIndex);
+    bool isOutputPin(unsigned bitIndex) const;
+    bool getOutputBit(unsigned bitIndex) const;
 
 private:
-    std::uint8_t directionMask = 0;
-    std::uint8_t outputValue = 0;
-    std::uint8_t inputValue = 0;
+    std::uint8_t ioDirectionMask = 0;
+    std::uint8_t portOutputValue = 0;
+    std::uint8_t portInputValue = 0;
 };
 
-void IOPort::setDirection(std::uint8_t mask) {
-    directionMask = mask;
+void IOPort::setIoDirection(std::uint8_t mask) {
+    ioDirectionMask = mask;
 }
 
-std::uint8_t IOPort::direction() const {
-    return directionMask;
+std::uint8_t IOPort::getIoDirection() const {
+    return ioDirectionMask;
 }
 
-void IOPort::write(std::uint8_t value) {
-    outputValue = value;
+void IOPort::writeData(std::uint8_t value) {
+    portOutputValue = value;
 }
 
-std::uint8_t IOPort::outputLatch() const {
-    return outputValue;
+std::uint8_t IOPort::getOutputLatch() const {
+    return portOutputValue;
 }
 
-void IOPort::sampleInput(std::uint8_t value) {
-    inputValue = value;
+void IOPort::sampleInputValue(std::uint8_t value) {
+    portInputValue = value;
 }
 
-std::uint8_t IOPort::read() const {
-    std::uint8_t outputs = outputValue & directionMask;
-    std::uint8_t inputs = inputValue & static_cast<std::uint8_t>(~directionMask);
+std::uint8_t IOPort::readData() const {
+    std::uint8_t outputs = portOutputValue & ioDirectionMask;
+    std::uint8_t inputs = portInputValue & static_cast<std::uint8_t>(~ioDirectionMask);
     return outputs | inputs;
 }
 
-void IOPort::setBit(unsigned bitNumber) {
-    if (bitNumber < 8) outputValue |= static_cast<std::uint8_t>(1u << bitNumber);
+void IOPort::setPortBit(unsigned bitIndex) {
+    if (bitIndex < 8) portOutputValue |= static_cast<std::uint8_t>(1u << bitIndex);
 }
 
-void IOPort::clearBit(unsigned bitNumber) {
-    if (bitNumber < 8) outputValue &= static_cast<std::uint8_t>(~(1u << bitNumber));
+void IOPort::clearPortBit(unsigned bitIndex) {
+    if (bitIndex < 8) portOutputValue &= static_cast<std::uint8_t>(~(1u << bitIndex));
 }
 
-bool IOPort::isOutput(unsigned bitNumber) const {
-    if (bitNumber >= 8) return false;
-    return ((directionMask >> bitNumber) & 1u) == 1u;
+bool IOPort::isOutputPin(unsigned bitIndex) const {
+    if (bitIndex >= 8) return false;
+    return ((ioDirectionMask >> bitIndex) & 1u) == 1u;
 }
 
-bool IOPort::outputBit(unsigned bitNumber) const {
-    if (bitNumber >= 8) return false;
-    return ((outputValue >> bitNumber) & 1u) == 1u;
+bool IOPort::getOutputBit(unsigned bitIndex) const {
+    if (bitIndex >= 8) return false;
+    return ((portOutputValue >> bitIndex) & 1u) == 1u;
 }
 
 class Microcontroller {
 public:
     Microcontroller();
 
-    bool loadFirmwareFile(const std::string& path, std::string& error);
-    bool loadFirmwareImage(const std::vector<std::uint8_t>& image, std::string& error);
+    bool loadFirmware(const std::string& path, std::string& errorMessage);
+    bool loadFirmwareBytes(const std::vector<std::uint8_t>& hexImage, std::string& errorMessage);
 
-    void reset();
-    void setClockHz(double value);
-    double clockHz() const;
-    void samplePortInputs(std::uint8_t portAInput, std::uint8_t portBInput);
-    void tick(std::uint32_t nowMs);
-    bool step();
+    void resetCpuState();
+    void setCpuClock(double value);
+    double getCpuClock() const;
+    void sampleIoPorts(std::uint8_t portAInput, std::uint8_t portBInput);
+    void runCpuTick(std::uint32_t currentMs);
+    bool runCpuStep();
 
-    const ProgramCounter& pc() const;
-    const RegisterFile& registers() const;
-    const InternalRAM& ram() const;
-    const IOPort& portA() const;
-    const IOPort& portB() const;
-    IOPort& portA();
-    IOPort& portB();
+    const ProgramCounter& getProgramCounter() const;
+    const RegisterFile& registerView() const;
+    const InternalRAM& ramView() const;
+    const IOPort& portAView() const;
+    const IOPort& portBView() const;
+    IOPort& portAView();
+    IOPort& portBView();
 
-    bool halted() const;
-    const std::string& lastError() const;
-    const std::string& firmwarePath() const;
-    std::uint64_t executedInstructions() const;
+    bool cpuHalted() const;
+    const std::string& cpuErrorText() const;
+    const std::string& firmwareFileName() const;
+    std::uint64_t instructionTotal() const;
 
 private:
-    bool enoughBytes(std::size_t count);
-    std::uint8_t getNextByte();
-    IOPort* getPort(std::uint8_t number);
-    const IOPort* getPort(std::uint8_t number) const;
+    bool hasProgramBytes(std::size_t count);
+    std::uint8_t nextProgramByte();
+    IOPort* pickPort(std::uint8_t number);
+    const IOPort* pickPort(std::uint8_t number) const;
 
     IntelHexLoader hexLoader;
     InstructionDecoder decoder;
-    std::vector<std::uint8_t> flashMemory;
-    ProgramCounter programCounter;
-    RegisterFile registerFile;
-    InternalRAM internalRam;
-    std::array<IOPort, 2> ports{};
+    std::vector<std::uint8_t> flashData;
+    ProgramCounter pcCounter;
+    RegisterFile registerBank;
+    InternalRAM internalMemory;
+    std::array<IOPort, 2> ioPorts{};
 
-    bool isHalted = true;
-    std::string errorText;
-    std::string loadedFilePath;
-    double frequency = 100.0;
-    std::uint32_t previousTick = 0;
-    double remainingCycles = 0.0;
-    std::uint64_t instructionCount = 0;
+    bool haltedFlag = true;
+    std::string lastCpuError;
+    std::string loadedFirmwarePath;
+    double cpuFrequency = 100.0;
+    std::uint32_t previousCpuTick = 0;
+    double cycleAccumulator = 0.0;
+    std::uint64_t executedInstructionCount = 0;
 };
 
-Microcontroller::Microcontroller() : internalRam(256) {
+Microcontroller::Microcontroller() : internalMemory(256) {
 }
 
-bool Microcontroller::loadFirmwareFile(const std::string& path, std::string& error) {
-    HexLoadResult result = hexLoader.loadFile(path);
+bool Microcontroller::loadFirmware(const std::string& path, std::string& errorMessage) {
+    HexLoadResult result = hexLoader.openHexFile(path);
 
     if (!result.ok) {
-        error = result.error;
-        errorText = error;
+        errorMessage = result.errorMessage;
+        lastCpuError = errorMessage;
         return false;
     }
 
-    if (!loadFirmwareImage(result.image, error)) return false;
-    loadedFilePath = path;
+    if (!loadFirmwareBytes(result.hexImage, errorMessage)) return false;
+    loadedFirmwarePath = path;
     return true;
 }
 
-bool Microcontroller::loadFirmwareImage(const std::vector<std::uint8_t>& image, std::string& error) {
-    if (image.empty()) {
-        error = "Firmware image is empty";
-        errorText = error;
+bool Microcontroller::loadFirmwareBytes(const std::vector<std::uint8_t>& hexImage, std::string& errorMessage) {
+    if (hexImage.empty()) {
+        errorMessage = "Firmware image is empty";
+        lastCpuError = errorMessage;
         return false;
     }
 
-    flashMemory = image;
-    reset();
-    isHalted = false;
-    error.clear();
-    errorText.clear();
+    flashData = hexImage;
+    resetCpuState();
+    haltedFlag = false;
+    errorMessage.clear();
+    lastCpuError.clear();
     return true;
 }
 
-void Microcontroller::reset() {
-    programCounter.reset();
-    registerFile.clear();
-    internalRam.clear();
-    ports[0] = IOPort();
-    ports[1] = IOPort();
+void Microcontroller::resetCpuState() {
+    pcCounter.resetCpuState();
+    registerBank.clearRegisters();
+    internalMemory.clearRam();
+    ioPorts[0] = IOPort();
+    ioPorts[1] = IOPort();
 
-    isHalted = flashMemory.empty();
-    errorText.clear();
-    previousTick = 0;
-    remainingCycles = 0;
-    instructionCount = 0;
+    haltedFlag = flashData.empty();
+    lastCpuError.clear();
+    previousCpuTick = 0;
+    cycleAccumulator = 0;
+    executedInstructionCount = 0;
 }
 
-void Microcontroller::setClockHz(double value) {
+void Microcontroller::setCpuClock(double value) {
     if (value < 0.1) value = 0.1;
     if (value > 1000000.0) value = 1000000.0;
-    frequency = value;
+    cpuFrequency = value;
 }
 
-double Microcontroller::clockHz() const {
-    return frequency;
+double Microcontroller::getCpuClock() const {
+    return cpuFrequency;
 }
 
-void Microcontroller::samplePortInputs(std::uint8_t portAInput, std::uint8_t portBInput) {
-    ports[0].sampleInput(portAInput);
-    ports[1].sampleInput(portBInput);
+void Microcontroller::sampleIoPorts(std::uint8_t portAInput, std::uint8_t portBInput) {
+    ioPorts[0].sampleInputValue(portAInput);
+    ioPorts[1].sampleInputValue(portBInput);
 }
 
-void Microcontroller::tick(std::uint32_t nowMs) {
-    if (isHalted || flashMemory.empty()) {
-        previousTick = nowMs;
+void Microcontroller::runCpuTick(std::uint32_t currentMs) {
+    if (haltedFlag || flashData.empty()) {
+        previousCpuTick = currentMs;
         return;
     }
 
-    if (previousTick == 0) {
-        previousTick = nowMs;
+    if (previousCpuTick == 0) {
+        previousCpuTick = currentMs;
         return;
     }
 
-    std::uint32_t passedTime = nowMs - previousTick;
-    previousTick = nowMs;
+    std::uint32_t passedTime = currentMs - previousCpuTick;
+    previousCpuTick = currentMs;
 
-    remainingCycles += (passedTime / 1000.0) * frequency;
-    int steps = static_cast<int>(remainingCycles);
+    cycleAccumulator += (passedTime / 1000.0) * cpuFrequency;
+    int steps = static_cast<int>(cycleAccumulator);
 
     if (steps > 200) steps = 200;
-    remainingCycles -= steps;
+    cycleAccumulator -= steps;
 
     for (int i = 0; i < steps; i++) {
-        if (isHalted) break;
-        step();
+        if (haltedFlag) break;
+        runCpuStep();
     }
 }
 
-bool Microcontroller::enoughBytes(std::size_t count) {
-    if (programCounter.value() + count <= flashMemory.size()) return true;
+bool Microcontroller::hasProgramBytes(std::size_t count) {
+    if (pcCounter.getCounterValue() + count <= flashData.size()) return true;
 
-    isHalted = true;
-    errorText = "Firmware ended in the middle of an instruction";
+    haltedFlag = true;
+    lastCpuError = "Firmware ended in the middle of an instruction";
     return false;
 }
 
-std::uint8_t Microcontroller::getNextByte() {
-    std::uint8_t value = flashMemory[programCounter.value()];
-    programCounter.advance();
+std::uint8_t Microcontroller::nextProgramByte() {
+    std::uint8_t value = flashData[pcCounter.getCounterValue()];
+    pcCounter.advanceCounter();
     return value;
 }
 
-IOPort* Microcontroller::getPort(std::uint8_t number) {
+IOPort* Microcontroller::pickPort(std::uint8_t number) {
     if (number > 1) return nullptr;
-    return &ports[number];
+    return &ioPorts[number];
 }
 
-const IOPort* Microcontroller::getPort(std::uint8_t number) const {
+const IOPort* Microcontroller::pickPort(std::uint8_t number) const {
     if (number > 1) return nullptr;
-    return &ports[number];
+    return &ioPorts[number];
 }
 
-bool Microcontroller::step() {
-    if (isHalted || flashMemory.empty()) return false;
-    if (!enoughBytes(1)) return false;
+bool Microcontroller::runCpuStep() {
+    if (haltedFlag || flashData.empty()) return false;
+    if (!hasProgramBytes(1)) return false;
 
-    std::uint8_t operation = getNextByte();
-    InstructionType instruction = decoder.decode(operation);
+    std::uint8_t operationCode = nextProgramByte();
+    InstructionType currentInstruction = decoder.decodeInstruction(operationCode);
 
-    switch (instruction) {
+    switch (currentInstruction) {
         case InstructionType::NOP:
             break;
 
         case InstructionType::MOV_IMMEDIATE: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t reg = getNextByte();
-            std::uint8_t value = getNextByte();
-            registerFile.write(reg, value);
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t registerIndex = nextProgramByte();
+            std::uint8_t value = nextProgramByte();
+            registerBank.writeData(registerIndex, value);
             break;
         }
 
         case InstructionType::MOV_REGISTER: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t destination = getNextByte();
-            std::uint8_t source = getNextByte();
-            registerFile.write(destination, registerFile.read(source));
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t destinationIndex = nextProgramByte();
+            std::uint8_t sourceIndex = nextProgramByte();
+            registerBank.writeData(destinationIndex, registerBank.readData(sourceIndex));
             break;
         }
 
         case InstructionType::MOV_FROM_RAM: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t reg = getNextByte();
-            std::uint8_t address = getNextByte();
-            registerFile.write(reg, internalRam.read(address));
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t registerIndex = nextProgramByte();
+            std::uint8_t memoryAddress = nextProgramByte();
+            registerBank.writeData(registerIndex, internalMemory.readData(memoryAddress));
             break;
         }
 
         case InstructionType::MOV_TO_RAM: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t address = getNextByte();
-            std::uint8_t reg = getNextByte();
-            internalRam.write(address, registerFile.read(reg));
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t memoryAddress = nextProgramByte();
+            std::uint8_t registerIndex = nextProgramByte();
+            internalMemory.writeData(memoryAddress, registerBank.readData(registerIndex));
             break;
         }
 
         case InstructionType::ADD_IMMEDIATE: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t reg = getNextByte();
-            std::uint8_t value = getNextByte();
-            registerFile.write(reg, static_cast<std::uint8_t>(registerFile.read(reg) + value));
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t registerIndex = nextProgramByte();
+            std::uint8_t value = nextProgramByte();
+            registerBank.writeData(registerIndex, static_cast<std::uint8_t>(registerBank.readData(registerIndex) + value));
             break;
         }
 
         case InstructionType::ADD_REGISTER: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t destination = getNextByte();
-            std::uint8_t source = getNextByte();
-            std::uint8_t answer = registerFile.read(destination) + registerFile.read(source);
-            registerFile.write(destination, answer);
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t destinationIndex = nextProgramByte();
+            std::uint8_t sourceIndex = nextProgramByte();
+            std::uint8_t result = registerBank.readData(destinationIndex) + registerBank.readData(sourceIndex);
+            registerBank.writeData(destinationIndex, result);
             break;
         }
 
         case InstructionType::JMP: {
-            if (!enoughBytes(2)) return false;
-            std::uint16_t low = getNextByte();
-            std::uint16_t high = getNextByte();
-            std::size_t target = low | (high << 8);
+            if (!hasProgramBytes(2)) return false;
+            std::uint16_t low = nextProgramByte();
+            std::uint16_t high = nextProgramByte();
+            std::size_t targetValue = low | (high << 8);
 
-            if (target >= flashMemory.size()) {
-                isHalted = true;
-                errorText = "JMP target is outside flash memory";
+            if (targetValue >= flashData.size()) {
+                haltedFlag = true;
+                lastCpuError = "JMP target is outside flash memory";
                 return false;
             }
 
-            programCounter.set(target);
+            pcCounter.setCounterValue(targetValue);
             break;
         }
 
         case InstructionType::SETB:
         case InstructionType::CLR: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t portNumber = getNextByte();
-            std::uint8_t bitNumber = getNextByte();
-            IOPort* selectedPort = getPort(portNumber);
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t portNumberValue = nextProgramByte();
+            std::uint8_t bitIndex = nextProgramByte();
+            IOPort* selectedIoPort = pickPort(portNumberValue);
 
-            if (selectedPort == nullptr || bitNumber > 7) {
-                isHalted = true;
-                errorText = "Invalid port or bit number";
+            if (selectedIoPort == nullptr || bitIndex > 7) {
+                haltedFlag = true;
+                lastCpuError = "Invalid port or bit number";
                 return false;
             }
 
-            if (instruction == InstructionType::SETB) selectedPort->setBit(bitNumber);
-            else selectedPort->clearBit(bitNumber);
+            if (currentInstruction == InstructionType::SETB) selectedIoPort->setPortBit(bitIndex);
+            else selectedIoPort->clearPortBit(bitIndex);
             break;
         }
 
-        case InstructionType::IN: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t reg = getNextByte();
-            std::uint8_t portNumber = getNextByte();
-            const IOPort* selectedPort = getPort(portNumber);
+        case InstructionType::INPUT_OP: {
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t registerIndex = nextProgramByte();
+            std::uint8_t portNumberValue = nextProgramByte();
+            const IOPort* selectedIoPort = pickPort(portNumberValue);
 
-            if (selectedPort == nullptr) {
-                isHalted = true;
-                errorText = "Invalid port in IN instruction";
+            if (selectedIoPort == nullptr) {
+                haltedFlag = true;
+                lastCpuError = "Invalid port in IN instruction";
                 return false;
             }
 
-            registerFile.write(reg, selectedPort->read());
+            registerBank.writeData(registerIndex, selectedIoPort->readData());
             break;
         }
 
-        case InstructionType::OUT: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t portNumber = getNextByte();
-            std::uint8_t reg = getNextByte();
-            IOPort* selectedPort = getPort(portNumber);
+        case InstructionType::OUTPUT_OP: {
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t portNumberValue = nextProgramByte();
+            std::uint8_t registerIndex = nextProgramByte();
+            IOPort* selectedIoPort = pickPort(portNumberValue);
 
-            if (selectedPort == nullptr) {
-                isHalted = true;
-                errorText = "Invalid port in OUT instruction";
+            if (selectedIoPort == nullptr) {
+                haltedFlag = true;
+                lastCpuError = "Invalid port in OUT instruction";
                 return false;
             }
 
-            selectedPort->write(registerFile.read(reg));
+            selectedIoPort->writeData(registerBank.readData(registerIndex));
             break;
         }
 
         case InstructionType::DIR: {
-            if (!enoughBytes(2)) return false;
-            std::uint8_t portNumber = getNextByte();
-            std::uint8_t direction = getNextByte();
-            IOPort* selectedPort = getPort(portNumber);
+            if (!hasProgramBytes(2)) return false;
+            std::uint8_t portNumberValue = nextProgramByte();
+            std::uint8_t getIoDirection = nextProgramByte();
+            IOPort* selectedIoPort = pickPort(portNumberValue);
 
-            if (selectedPort == nullptr) {
-                isHalted = true;
-                errorText = "Invalid port in DIR instruction";
+            if (selectedIoPort == nullptr) {
+                haltedFlag = true;
+                lastCpuError = "Invalid port in DIR instruction";
                 return false;
             }
 
-            selectedPort->setDirection(direction);
+            selectedIoPort->setIoDirection(getIoDirection);
             break;
         }
 
         case InstructionType::HALT:
-            isHalted = true;
+            haltedFlag = true;
             break;
 
         case InstructionType::UNKNOWN: {
             static const char hexChars[] = "0123456789ABCDEF";
-            isHalted = true;
-            errorText = "Unknown opcode 0x";
-            errorText += hexChars[(operation >> 4) & 15];
-            errorText += hexChars[operation & 15];
+            haltedFlag = true;
+            lastCpuError = "Unknown opcode 0x";
+            lastCpuError += hexChars[(operationCode >> 4) & 15];
+            lastCpuError += hexChars[operationCode & 15];
             return false;
         }
     }
 
-    instructionCount++;
+    executedInstructionCount++;
 
-    if (programCounter.value() >= flashMemory.size() && !isHalted) {
-        isHalted = true;
+    if (pcCounter.getCounterValue() >= flashData.size() && !haltedFlag) {
+        haltedFlag = true;
     }
 
     return true;
 }
 
-const ProgramCounter& Microcontroller::pc() const {
-    return programCounter;
+const ProgramCounter& Microcontroller::getProgramCounter() const {
+    return pcCounter;
 }
 
-const RegisterFile& Microcontroller::registers() const {
-    return registerFile;
+const RegisterFile& Microcontroller::registerView() const {
+    return registerBank;
 }
 
-const InternalRAM& Microcontroller::ram() const {
-    return internalRam;
+const InternalRAM& Microcontroller::ramView() const {
+    return internalMemory;
 }
 
-const IOPort& Microcontroller::portA() const {
-    return ports[0];
+const IOPort& Microcontroller::portAView() const {
+    return ioPorts[0];
 }
 
-const IOPort& Microcontroller::portB() const {
-    return ports[1];
+const IOPort& Microcontroller::portBView() const {
+    return ioPorts[1];
 }
 
-IOPort& Microcontroller::portA() {
-    return ports[0];
+IOPort& Microcontroller::portAView() {
+    return ioPorts[0];
 }
 
-IOPort& Microcontroller::portB() {
-    return ports[1];
+IOPort& Microcontroller::portBView() {
+    return ioPorts[1];
 }
 
-bool Microcontroller::halted() const {
-    return isHalted;
+bool Microcontroller::cpuHalted() const {
+    return haltedFlag;
 }
 
-const std::string& Microcontroller::lastError() const {
-    return errorText;
+const std::string& Microcontroller::cpuErrorText() const {
+    return lastCpuError;
 }
 
-const std::string& Microcontroller::firmwarePath() const {
-    return loadedFilePath;
+const std::string& Microcontroller::firmwareFileName() const {
+    return loadedFirmwarePath;
 }
 
-std::uint64_t Microcontroller::executedInstructions() const {
-    return instructionCount;
+std::uint64_t Microcontroller::instructionTotal() const {
+    return executedInstructionCount;
 }
 
 class ExternalMemory {
 public:
     explicit ExternalMemory(std::size_t size = 256);
 
-    void resize(std::size_t size);
-    std::uint8_t read(std::size_t address) const;
-    void write(std::size_t address, std::uint8_t value);
-    void clear();
-    std::size_t size() const;
-
+    void changeMemorySize(std::size_t size);
+    std::uint8_t readData(std::size_t memoryAddress) const;
+    void writeData(std::size_t memoryAddress, std::uint8_t value);
+    void clearMemory();
+    std::size_t getMemorySize() const;
 private:
-    std::vector<std::uint8_t> memory;
+    std::vector<std::uint8_t> memoryData;
 };
 
 ExternalMemory::ExternalMemory(std::size_t size) {
     if (size == 0) size = 1;
-    memory.resize(size, 0);
+    memoryData.resize(size, 0);
 }
 
-void ExternalMemory::resize(std::size_t size) {
+void ExternalMemory::changeMemorySize(std::size_t size) {
     if (size == 0) size = 1;
-    memory.resize(size, 0);
+    memoryData.resize(size, 0);
 }
 
-std::uint8_t ExternalMemory::read(std::size_t address) const {
-    if (memory.empty()) return 0;
-    return memory[address % memory.size()];
+std::uint8_t ExternalMemory::readData(std::size_t memoryAddress) const {
+    if (memoryData.empty()) return 0;
+    return memoryData[memoryAddress % memoryData.size()];
 }
 
-void ExternalMemory::write(std::size_t address, std::uint8_t value) {
-    if (!memory.empty()) memory[address % memory.size()] = value;
+void ExternalMemory::writeData(std::size_t memoryAddress, std::uint8_t value) {
+    if (!memoryData.empty()) memoryData[memoryAddress % memoryData.size()] = value;
 }
 
-void ExternalMemory::clear() {
-    std::fill(memory.begin(), memory.end(), 0);
+void ExternalMemory::clearMemory() {
+    std::fill(memoryData.begin(), memoryData.end(), 0);
 }
 
-std::size_t ExternalMemory::size() const {
-    return memory.size();
+std::size_t ExternalMemory::getMemorySize() const {
+    return memoryData.size();
 }
 
 class LCD16x2 {
 public:
     LCD16x2();
+    void clearDisplay();
+    void cursorHome();
+    void processLcdCommand(std::uint8_t value);
+    void writeLcdChar(std::uint8_t value);
+    void sampleLcdBus(std::uint8_t data, bool lcdRs, bool lcdRw, bool lcdEnable);
 
-    void clear();
-    void home();
-    void command(std::uint8_t value);
-    void writeCharacter(std::uint8_t value);
-    void sampleBus(std::uint8_t data, bool rs, bool rw, bool enable);
-
-    std::string row(int index) const;
-    int cursorRow() const;
-    int cursorColumn() const;
+    std::string getRowText(int index) const;
+    int cursorRowIndex() const;
+    int cursorColumnIndex() const;
 
 private:
-    std::array<std::array<char, 16>, 2> screen{};
-    int currentRow = 0;
-    int currentColumn = 0;
-    bool oldEnable = false;
+    std::array<std::array<char, 16>, 2> lcdScreen{};
+    int lcdCurrentRow = 0;
+    int lcdCurrentColumn = 0;
+    bool previousLcdEnable = false;
 };
 
 LCD16x2::LCD16x2() {
-    clear();
+    clearDisplay();
 }
 
-void LCD16x2::clear() {
-    for (int rowNumber = 0; rowNumber < 2; rowNumber++) {
-        screen[rowNumber].fill(' ');
+void LCD16x2::clearDisplay() {
+    for (int lcdRowIndex = 0; lcdRowIndex < 2; lcdRowIndex++) {
+        lcdScreen[lcdRowIndex].fill(' ');
     }
-    currentRow = 0;
-    currentColumn = 0;
+    lcdCurrentRow = 0;
+    lcdCurrentColumn = 0;
 }
 
-void LCD16x2::home() {
-    currentRow = 0;
-    currentColumn = 0;
+void LCD16x2::cursorHome() {
+    lcdCurrentRow = 0;
+    lcdCurrentColumn = 0;
 }
 
-void LCD16x2::command(std::uint8_t value) {
+void LCD16x2::processLcdCommand(std::uint8_t value) {
     if (value == 0x01) {
-        clear();
+        clearDisplay();
     }
     else if (value == 0x02) {
-        home();
+        cursorHome();
     }
     else if ((value & 0x80u) != 0) {
-        int address = value & 0x7F;
-        if (address >= 0x40) {
-            currentRow = 1;
-            currentColumn = address - 0x40;
+        int memoryAddress = value & 0x7F;
+        if (memoryAddress >= 0x40) {
+            lcdCurrentRow = 1;
+            lcdCurrentColumn = memoryAddress - 0x40;
         } else {
-            currentRow = 0;
-            currentColumn = address;
+            lcdCurrentRow = 0;
+            lcdCurrentColumn = memoryAddress;
         }
 
-        if (currentColumn > 15) currentColumn = 15;
+        if (lcdCurrentColumn > 15) lcdCurrentColumn = 15;
     }
 }
 
-void LCD16x2::writeCharacter(std::uint8_t value) {
-    char character = '?';
-    if (value >= 32 && value <= 126) character = static_cast<char>(value);
+void LCD16x2::writeLcdChar(std::uint8_t value) {
+    char currentChar = '?';
+    if (value >= 32 && value <= 126) currentChar = static_cast<char>(value);
 
-    screen[currentRow][currentColumn] = character;
-    currentColumn++;
+    lcdScreen[lcdCurrentRow][lcdCurrentColumn] = currentChar;
+    lcdCurrentColumn++;
 
-    if (currentColumn >= 16) {
-        currentColumn = 0;
-        currentRow++;
-        if (currentRow >= 2) currentRow = 0;
+    if (lcdCurrentColumn >= 16) {
+        lcdCurrentColumn = 0;
+        lcdCurrentRow++;
+        if (lcdCurrentRow >= 2) lcdCurrentRow = 0;
     }
 }
 
-void LCD16x2::sampleBus(std::uint8_t data, bool rs, bool rw, bool enable) {
-    if (oldEnable && !enable && !rw) {
-        if (rs) writeCharacter(data);
-        else command(data);
+void LCD16x2::sampleLcdBus(std::uint8_t data, bool lcdRs, bool lcdRw, bool lcdEnable) {
+
+    if (previousLcdEnable && !lcdEnable && !lcdRw) {
+        if (lcdRs) writeLcdChar(data);
+        else processLcdCommand(data);
     }
-    oldEnable = enable;
+    previousLcdEnable = lcdEnable;
 }
 
-std::string LCD16x2::row(int index) const {
+std::string LCD16x2::getRowText(int index) const {
     if (index < 0 || index > 1) return "";
-    return std::string(screen[index].begin(), screen[index].end());
+    return std::string(lcdScreen[index].begin(), lcdScreen[index].end());
 }
 
-int LCD16x2::cursorRow() const {
-    return currentRow;
+int LCD16x2::cursorRowIndex() const {
+    return lcdCurrentRow;
 }
 
-int LCD16x2::cursorColumn() const {
-    return currentColumn;
+int LCD16x2::cursorColumnIndex() const {
+    return lcdCurrentColumn;
 }
 
 class MatrixKeypad4x4 {
 public:
-    void press(int row, int column);
-    void release();
+    void pressMatrixKey(int rowIndexValue, int column);
+    void releaseMatrixKey();
 
-    bool pressed() const;
-    int pressedRow() const;
-    int pressedColumn() const;
-    char pressedCharacter() const;
+    bool hasPressedKey() const;
+    int pressedRowIndex() const;
+    int pressedColumnIndex() const;
+    char pressedKeyChar() const;
 
 private:
-    int selectedRow = -1;
-    int selectedColumn = -1;
+    int keypadRow = -1;
+    int keypadColumn = -1;
 };
 
-void MatrixKeypad4x4::press(int row, int column) {
-    if (row < 0) row = 0;
-    if (row > 3) row = 3;
+void MatrixKeypad4x4::pressMatrixKey(int rowIndexValue, int column) {
+    if (rowIndexValue < 0) rowIndexValue = 0;
+    if (rowIndexValue > 3) rowIndexValue = 3;
     if (column < 0) column = 0;
     if (column > 3) column = 3;
 
-    selectedRow = row;
-    selectedColumn = column;
+    keypadRow = rowIndexValue;
+    keypadColumn = column;
 }
 
-void MatrixKeypad4x4::release() {
-    selectedRow = -1;
-    selectedColumn = -1;
+void MatrixKeypad4x4::releaseMatrixKey() {
+    keypadRow = -1;
+    keypadColumn = -1;
 }
 
-bool MatrixKeypad4x4::pressed() const {
-    return selectedRow >= 0 && selectedColumn >= 0;
+bool MatrixKeypad4x4::hasPressedKey() const {
+    return keypadRow >= 0 && keypadColumn >= 0;
 }
 
-int MatrixKeypad4x4::pressedRow() const {
-    return selectedRow;
+int MatrixKeypad4x4::pressedRowIndex() const {
+    return keypadRow;
 }
 
-int MatrixKeypad4x4::pressedColumn() const {
-    return selectedColumn;
+int MatrixKeypad4x4::pressedColumnIndex() const {
+    return keypadColumn;
 }
 
-char MatrixKeypad4x4::pressedCharacter() const {
+char MatrixKeypad4x4::pressedKeyChar() const {
     static const char keys[4][4] = {
         {'1', '2', '3', 'A'},
         {'4', '5', '6', 'B'},
@@ -1077,18 +1076,18 @@ char MatrixKeypad4x4::pressedCharacter() const {
         {'*', '0', '#', 'D'}
     };
 
-    if (!pressed()) return '\0';
-    return keys[selectedRow][selectedColumn];
+    if (!hasPressedKey()) return '\0';
+    return keys[keypadRow][keypadColumn];
 }
 
 using namespace std;
 
-static bool appFileExists(const string& path) {
+static bool fileExists(const string& path) {
     ifstream file(path, ios::binary);
     return file.good();
 }
 
-static vector<string> applicationFontCandidates() {
+static vector<string> fontCandidates() {
     vector<string> candidates;
 
     char* basePath = SDL_GetBasePath();
@@ -1117,9 +1116,9 @@ static vector<string> applicationFontCandidates() {
     return candidates;
 }
 
-static TTF_Font* openApplicationFont(int pointSize) {
-    for (const string& path : applicationFontCandidates()) {
-        if (!appFileExists(path)) continue;
+static TTF_Font* loadAppFont(int pointSize) {
+    for (const string& path : fontCandidates()) {
+        if (!fileExists(path)) continue;
         TTF_Font* loaded = TTF_OpenFont(path.c_str(), pointSize);
         if (loaded) return loaded;
     }
@@ -1140,29 +1139,29 @@ struct LocalPin {
 
 class Component {
 protected:
-    string componentName;
-    string componentCategory;
-    string initialValue;
+    string componentTitle;
+    string componentGroup;
+    string initialComponentValue;
 
 public:
-    Component(string name, string category, string value)
-        : componentName(std::move(name)), componentCategory(std::move(category)),
-          initialValue(std::move(value)) {}
+    Component(string name, string categoryName, string value)
+        : componentTitle(std::move(name)), componentGroup(std::move(categoryName)),
+          initialComponentValue(std::move(value)) {}
     virtual ~Component() = default;
 
-    const string& name() const { return componentName; }
-    const string& category() const { return componentCategory; }
-    const string& defaultValue() const { return initialValue; }
-    virtual vector<LocalPin> localPins(int inputCount) const = 0;
+    const string& name() const { return componentTitle; }
+    const string& getCategory() const { return componentGroup; }
+    const string& getDefaultSetting() const { return initialComponentValue; }
+    virtual vector<LocalPin> getPinLayout(int inputCountValue) const = 0;
 };
 
 class FixedPinComponent : public Component {
-    vector<LocalPin> fixedPins;
+    vector<LocalPin> fixedPinList;
 public:
-    FixedPinComponent(string name, string category, string value, vector<LocalPin> pins)
-        : Component(std::move(name), std::move(category), std::move(value)),
-          fixedPins(std::move(pins)) {}
-    vector<LocalPin> localPins(int) const override { return fixedPins; }
+    FixedPinComponent(string name, string categoryName, string value, vector<LocalPin> pins)
+        : Component(std::move(name), std::move(categoryName), std::move(value)),
+          fixedPinList(std::move(pins)) {}
+    vector<LocalPin> getPinLayout(int) const override { return fixedPinList; }
 };
 
 class PassiveComponent : public FixedPinComponent {
@@ -1194,15 +1193,15 @@ public:
     LogicGateComponent(string name, string value)
         : Component(std::move(name), "Digital Logic", std::move(value)) {}
 
-    vector<LocalPin> localPins(int inputCount) const override {
+    vector<LocalPin> getPinLayout(int inputCountValue) const override {
         vector<LocalPin> pins;
-        if (componentName == "NOT Gate") {
+        if (componentTitle == "NOT Gate") {
             pins.push_back({-22, 0, PinKind::INPUT});
             pins.push_back({ 24, 0, PinKind::OUTPUT});
             return pins;
         }
 
-        int count = std::max(2, std::min(8, inputCount));
+        int count = std::max(2, std::min(8, inputCountValue));
         for (int i = 0; i < count; ++i) {
             int y = count == 1 ? 0 : -14 + (28 * i) / (count - 1);
             pins.push_back({-28, y, PinKind::INPUT});
@@ -1217,7 +1216,7 @@ public:
     DFlipFlopComponent()
         : Component("D Flip-Flop", "Digital Logic", "delay=10") {}
 
-    vector<LocalPin> localPins(int) const override {
+    vector<LocalPin> getPinLayout(int) const override {
         return {
             {-30, -10, PinKind::INPUT},
             {-30, 10, PinKind::INPUT},
@@ -1229,15 +1228,15 @@ public:
 class ADCComponent : public Component {
 public:
     ADCComponent() : Component("ADC", "Advanced", "bits=8;delay=10") {}
-    vector<LocalPin> localPins(int outputBits) const override {
-        int count = std::max(2, std::min(12, outputBits));
+    vector<LocalPin> getPinLayout(int outputBitCount) const override {
+        int count = std::max(2, std::min(12, outputBitCount));
         vector<LocalPin> pins = {
             {-52, -22, PinKind::INPUT},
             {-52, 0, PinKind::INPUT},
             {-52, 22, PinKind::INPUT}
         };
-        for (int bit = 0; bit < count; ++bit) {
-            int y = count == 1 ? 0 : -30 + (60 * bit) / (count - 1);
+        for (int bitIndexValue = 0; bitIndexValue < count; ++bitIndexValue) {
+            int y = count == 1 ? 0 : -30 + (60 * bitIndexValue) / (count - 1);
             pins.push_back({52, y, PinKind::OUTPUT});
         }
         return pins;
@@ -1247,11 +1246,11 @@ public:
 class DACComponent : public Component {
 public:
     DACComponent() : Component("DAC", "Advanced", "bits=8;delay=10") {}
-    vector<LocalPin> localPins(int inputBits) const override {
-        int count = std::max(2, std::min(12, inputBits));
+    vector<LocalPin> getPinLayout(int inputBitCount) const override {
+        int count = std::max(2, std::min(12, inputBitCount));
         vector<LocalPin> pins;
-        for (int bit = 0; bit < count; ++bit) {
-            int y = count == 1 ? 0 : -30 + (60 * bit) / (count - 1);
+        for (int bitIndexValue = 0; bitIndexValue < count; ++bitIndexValue) {
+            int y = count == 1 ? 0 : -30 + (60 * bitIndexValue) / (count - 1);
             pins.push_back({-52, y, PinKind::INPUT});
         }
         pins.push_back({0, -38, PinKind::INPUT});
@@ -1265,10 +1264,10 @@ class MicrocontrollerComponent : public Component {
 public:
     MicrocontrollerComponent()
         : Component("Microcontroller", "Advanced", "firmware=;clock=100") {}
-    vector<LocalPin> localPins(int) const override {
+    vector<LocalPin> getPinLayout(int) const override {
         vector<LocalPin> pins;
-        for (int bit = 0; bit < 8; ++bit) pins.push_back({-58, -28 + bit * 8, PinKind::PASSIVE});
-        for (int bit = 0; bit < 8; ++bit) pins.push_back({ 58, -28 + bit * 8, PinKind::PASSIVE});
+        for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) pins.push_back({-58, -28 + bitIndexValue * 8, PinKind::PASSIVE});
+        for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) pins.push_back({ 58, -28 + bitIndexValue * 8, PinKind::PASSIVE});
         return pins;
     }
 };
@@ -1277,10 +1276,10 @@ class ExternalMemoryComponent : public Component {
 public:
     ExternalMemoryComponent()
         : Component("External Memory", "Advanced", "size=256;type=EEPROM") {}
-    vector<LocalPin> localPins(int) const override {
+    vector<LocalPin> getPinLayout(int) const override {
         vector<LocalPin> pins;
-        for (int bit = 0; bit < 8; ++bit) pins.push_back({-62, -28 + bit * 8, PinKind::INPUT});
-        for (int bit = 0; bit < 8; ++bit) pins.push_back({ 62, -28 + bit * 8, PinKind::PASSIVE});
+        for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) pins.push_back({-62, -28 + bitIndexValue * 8, PinKind::INPUT});
+        for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) pins.push_back({ 62, -28 + bitIndexValue * 8, PinKind::PASSIVE});
         pins.push_back({-16, 42, PinKind::INPUT});
         pins.push_back({ 16, 42, PinKind::INPUT});
         return pins;
@@ -1290,9 +1289,9 @@ public:
 class LCDComponent : public Component {
 public:
     LCDComponent() : Component("LCD 16x2", "Advanced", "16x2") {}
-    vector<LocalPin> localPins(int) const override {
+    vector<LocalPin> getPinLayout(int) const override {
         vector<LocalPin> pins;
-        for (int bit = 0; bit < 8; ++bit) pins.push_back({-68, -28 + bit * 8, PinKind::INPUT});
+        for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) pins.push_back({-68, -28 + bitIndexValue * 8, PinKind::INPUT});
         pins.push_back({68, -16, PinKind::INPUT});
         pins.push_back({68, 0, PinKind::INPUT});
         pins.push_back({68, 16, PinKind::INPUT});
@@ -1303,9 +1302,9 @@ public:
 class KeypadComponent : public Component {
 public:
     KeypadComponent() : Component("Keypad 4x4", "Advanced", "4x4") {}
-    vector<LocalPin> localPins(int) const override {
+    vector<LocalPin> getPinLayout(int) const override {
         vector<LocalPin> pins;
-        for (int row = 0; row < 4; ++row) pins.push_back({-46, -24 + row * 16, PinKind::PASSIVE});
+        for (int rowIndexValue = 0; rowIndexValue < 4; ++rowIndexValue) pins.push_back({-46, -24 + rowIndexValue * 16, PinKind::PASSIVE});
         for (int column = 0; column < 4; ++column) pins.push_back({46, -24 + column * 16, PinKind::PASSIVE});
         return pins;
     }
@@ -1313,29 +1312,29 @@ public:
 
 class ComponentLibrary {
 public:
-    static const Component& get(const string& name) {
-        static PassiveComponent resistor("Resistor", "1000", {{-32, 0, PinKind::PASSIVE}, {32, 0, PinKind::PASSIVE}});
-        static PassiveComponent capacitor("Capacitor", "0.000001", {{0, -18, PinKind::PASSIVE}, {0, 18, PinKind::PASSIVE}});
-        static PassiveComponent inductor("Inductor", "0.001", {{-27, 0, PinKind::PASSIVE}, {27, 0, PinKind::PASSIVE}});
+    static const Component& getComponentInfo(const string& name) {
+        static PassiveComponent resistor("Resistor", "1000", {{-32,0,PinKind::PASSIVE},{32,0,PinKind::PASSIVE}});
+        static PassiveComponent capacitor("Capacitor", "0.000001", {{0,-18,PinKind::PASSIVE},{0,18,PinKind::PASSIVE}});
+        static PassiveComponent inductor("Inductor", "0.001", {{-27,0,PinKind::PASSIVE},{27,0,PinKind::PASSIVE}});
 
-        static SourceComponent ground("Ground", "0", {{0, -12, PinKind::OUTPUT}});
-        static SourceComponent vcc("VCC", "5", {{0, -14, PinKind::OUTPUT}});
-        static SourceComponent dc("DC Voltage Source", "5", {{0, -18, PinKind::OUTPUT}, {0, 18, PinKind::OUTPUT}});
-        static SourceComponent battery("Battery", "9;internal=0.5", {{0, -18, PinKind::OUTPUT}, {0, 18, PinKind::OUTPUT}});
-        static SourceComponent clock("Clock Generator", "1", {{24, 0, PinKind::OUTPUT}});
+        static SourceComponent ground("Ground", "0", {{0,-12,PinKind::OUTPUT}});
+        static SourceComponent vcc("VCC", "5", {{0,-14,PinKind::OUTPUT}});
+        static SourceComponent dc("DC Voltage Source", "5", {{0,-18,PinKind::OUTPUT},{0,18,PinKind::OUTPUT}});
+        static SourceComponent battery("Battery", "9;internal=0.5", {{0,-18,PinKind::OUTPUT},{0,18,PinKind::OUTPUT}});
+        static SourceComponent clock("Clock Generator", "1", {{24,0,PinKind::OUTPUT}});
 
-        static InteractiveComponent sw("Switch", "OPEN", {{-28, 0, PinKind::PASSIVE}, {28, 0, PinKind::PASSIVE}});
-        static InteractiveComponent button("Push Button", "MOMENTARY", {{-28, 0, PinKind::PASSIVE}, {28, 0, PinKind::PASSIVE}});
+        static InteractiveComponent sw("Switch", "OPEN", {{-28,0,PinKind::PASSIVE},{28,0,PinKind::PASSIVE}});
+        static InteractiveComponent button("Push Button", "MOMENTARY", {{-28,0,PinKind::PASSIVE},{28,0,PinKind::PASSIVE}});
 
-        static DisplayComponent led("LED", "RED", {{0, -16, PinKind::PASSIVE}, {0, 16, PinKind::PASSIVE}});
+        static DisplayComponent led("LED", "RED", {{0,-16,PinKind::PASSIVE},{0,16,PinKind::PASSIVE}});
         static DisplayComponent seven("7-Segment", "COMMON_CATHODE", {
-            {-18, -14, PinKind::INPUT}, {-18, -6, PinKind::INPUT}, {-18, 2, PinKind::INPUT}, {-18, 10, PinKind::INPUT},
-            {18, -14, PinKind::INPUT}, {18, -6, PinKind::INPUT}, {18, 2, PinKind::INPUT}, {18, 10, PinKind::INPUT}
+            {-18,-14,PinKind::INPUT},{-18,-6,PinKind::INPUT},{-18,2,PinKind::INPUT},{-18,10,PinKind::INPUT},
+            {18,-14,PinKind::INPUT},{18,-6,PinKind::INPUT},{18,2,PinKind::INPUT},{18,10,PinKind::INPUT}
         });
 
         static LogicGateComponent andGate("AND Gate", "inputs=2;delay=10");
         static LogicGateComponent orGate("OR Gate", "inputs=2;delay=10");
-        static LogicGateComponent notGate("NOT Gate", "delay=10");
+        static LogicGateComponent notGateValue("NOT Gate", "delay=10");
         static LogicGateComponent nandGate("NAND Gate", "inputs=2;delay=10");
         static LogicGateComponent xorGate("XOR Gate", "inputs=2;delay=10");
         static DFlipFlopComponent dff;
@@ -1347,9 +1346,9 @@ public:
         static LCDComponent lcd;
         static KeypadComponent keypad;
 
-        static FixedPinComponent npn("NPN", "Transistor", "", {{0, -14, PinKind::PASSIVE}, {0, 14, PinKind::PASSIVE}, {-12, 0, PinKind::INPUT}});
-        static FixedPinComponent pnp("PNP", "Transistor", "", {{0, -14, PinKind::PASSIVE}, {0, 14, PinKind::PASSIVE}, {-12, 0, PinKind::INPUT}});
-        static FixedPinComponent generic("Generic", "Other", "", {{-15, 0, PinKind::PASSIVE}, {15, 0, PinKind::PASSIVE}});
+        static FixedPinComponent npn("NPN", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
+        static FixedPinComponent pnp("PNP", "Transistor", "", {{0,-14,PinKind::PASSIVE},{0,14,PinKind::PASSIVE},{-12,0,PinKind::INPUT}});
+        static FixedPinComponent generic("Generic", "Other", "", {{-15,0,PinKind::PASSIVE},{15,0,PinKind::PASSIVE}});
 
         if (name == "Resistor") return resistor;
         if (name == "Capacitor") return capacitor;
@@ -1365,7 +1364,7 @@ public:
         if (name == "7-Segment") return seven;
         if (name == "AND Gate") return andGate;
         if (name == "OR Gate") return orGate;
-        if (name == "NOT Gate") return notGate;
+        if (name == "NOT Gate") return notGateValue;
         if (name == "NAND Gate") return nandGate;
         if (name == "XOR Gate") return xorGate;
         if (name == "D Flip-Flop") return dff;
@@ -1394,14 +1393,14 @@ public:
     static constexpr double lowVoltage = 0.0;
     static constexpr double highVoltage = 5.0;
 
-    static LogicLevel fromVoltage(double voltage) {
+    static LogicLevel logicFromVoltage(double voltage) {
         if (std::isnan(voltage)) return LogicLevel::UNDEFINED;
         if (voltage <= lowMaximum) return LogicLevel::LOW;
         if (voltage >= highMinimum) return LogicLevel::HIGH;
         return LogicLevel::UNDEFINED;
     }
 
-    static double toVoltage(LogicLevel level) {
+    static double voltageFromLogic(LogicLevel level) {
         if (level == LogicLevel::LOW) return lowVoltage;
         if (level == LogicLevel::HIGH) return highVoltage;
         return std::numeric_limits<double>::quiet_NaN();
@@ -1419,9 +1418,9 @@ struct placedComp {
     string value;
 
     int id = 0;
-    int inputCount = 2;
-    double propagationDelayMs = 10.0;
-    bool switchState = false;
+    int inputCountValue = 2;
+    double propagationDelay = 10.0;
+    bool switchClosed = false;
 };
 
 struct project {
@@ -1432,8 +1431,8 @@ struct project {
     int canvasH;
     vector<string> activeComponents;
 
-    project(string n, string p, string date, int cw = 800, int ch = 600, vector<string> ac = {})
-        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch), activeComponents(ac) {}
+    project(string n, string p , string date, int cw = 800, int ch = 600, vector<string> ac = {})
+        : name(n), path(p), lastP(date), canvasW(cw), canvasH(ch), activeComponents (ac) {}
 };
 
 enum class app {
@@ -1452,7 +1451,7 @@ enum class canvasPreset {
 
 enum class Tool {
     SELECT,
-    WIRE,
+    WIRE ,
     COMPONENT
 };
 
@@ -1463,10 +1462,11 @@ enum class SimulationState {
 };
 
 class txtIn {
+
 private:
     SDL_Rect box;
     string text;
-    bool active;
+    bool active ;
     bool numericOnly;
     SDL_Texture* txtTexture;
     TTF_Font* font;
@@ -1474,7 +1474,7 @@ private:
 
     void updateTexture() {
         if (txtTexture)
-            SDL_DestroyTexture(txtTexture);
+            SDL_DestroyTexture( txtTexture);
 
         if (!font)
             return;
@@ -1487,20 +1487,20 @@ private:
             SDL_FreeSurface(surf);
         }
         else {
-            txtTexture = nullptr;
+            txtTexture =nullptr;
         }
     }
 
 public:
-    txtIn(SDL_Renderer* rend, TTF_Font* f, int x, int y, int w, int h, bool numOnly = true)
+    txtIn( SDL_Renderer* rend, TTF_Font* f, int x, int y,int w, int h, bool numOnly= true)
         : text(""), active(false), numericOnly(numOnly), txtTexture(nullptr), font(f), renderer(rend) {
         box = {x, y, w, h};
-        updateTexture();
+        updateTexture ();
     }
 
     ~txtIn() {
         if (txtTexture)
-            SDL_DestroyTexture(txtTexture);
+            SDL_DestroyTexture (txtTexture);
     }
 
     void setTxt(const string& t) {
@@ -1515,18 +1515,18 @@ public:
         }
     }
 
-    void handleEvent(const SDL_Event& e) {
-        if (!active)
+    void handleEvent (const SDL_Event& e) {
+        if ( !active)
             return;
 
-        if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_BACKSPACE && !text.empty()) {
+        if (e.type == SDL_KEYDOWN && e.key.keysym.sym== SDLK_BACKSPACE && !text.empty()) {
             text.pop_back();
             updateTexture();
         }
 
-        if (numericOnly) {
+        if(numericOnly) {
             if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9) {
+                if ( e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9 ){
                     if (text.size() < 5) {
                         text += (char)('0'+ (e.key.keysym.sym - SDLK_0));
                         updateTexture();
@@ -1542,9 +1542,9 @@ public:
         }
         else {
             if (e.type == SDL_TEXTINPUT) {
-                string input = e.text.text;
+                string input =e.text.text;
                 for (char c : input) {
-                    if (text.size() < 30) {
+                    if (text.size () < 30) {
                         text += c;
                     }
                 }
@@ -1553,13 +1553,13 @@ public:
         }
     }
 
-    void draw(SDL_Renderer* rend) const {
+    void draw (SDL_Renderer* rend) const {
         SDL_SetRenderDrawColor(rend, 255, 255, 255, 255);
         SDL_RenderFillRect(rend, &box);
         if (active)
-            SDL_SetRenderDrawColor(rend, 50, 180, 50, 255);
+            SDL_SetRenderDrawColor( rend, 50, 180, 50, 255);
         else
-            SDL_SetRenderDrawColor(rend, 120, 120, 120, 255);
+            SDL_SetRenderDrawColor (rend, 120,120, 120, 255);
         SDL_RenderDrawRect(rend, &box);
 
         if (txtTexture) {
@@ -1568,26 +1568,26 @@ public:
             textRect.h = box.h -6;
             textRect.x = box.x + 5;
             textRect.y = box.y + (box.h - textRect.h) / 2;
-            SDL_QueryTexture(txtTexture, nullptr, nullptr, &textRect.w, &textRect.h);
+            SDL_QueryTexture(txtTexture, nullptr, nullptr,&textRect.w, &textRect.h);
             SDL_RenderCopy(rend, txtTexture, nullptr, &textRect);
         }
     }
 
     void drawAt(SDL_Renderer* rend, int x, int y) const {
         SDL_Rect shiftedBox = {x, y, box.w, box.h};
-        SDL_SetRenderDrawColor(rend, 255, 255, 255, 255);
-        SDL_RenderFillRect(rend, &shiftedBox);
+        SDL_SetRenderDrawColor (rend, 255, 255, 255, 255);
+        SDL_RenderFillRect(rend,&shiftedBox);
         if (active)
-            SDL_SetRenderDrawColor(rend, 50, 180, 50, 255);
+            SDL_SetRenderDrawColor( rend, 50, 180, 50, 255);
         else
-            SDL_SetRenderDrawColor(rend, 120, 120, 120, 255);
+            SDL_SetRenderDrawColor (rend, 120,120, 120, 255);
         SDL_RenderDrawRect(rend, &shiftedBox);
 
         if (txtTexture) {
             SDL_Rect textRect;
             textRect.w = min(shiftedBox.w - 10, 200);
-            textRect.h = shiftedBox.h - 6;
-            SDL_QueryTexture(txtTexture, nullptr, nullptr, &textRect.w, &textRect.h);
+            textRect.h = shiftedBox.h - 6 ;
+            SDL_QueryTexture( txtTexture, nullptr, nullptr, &textRect.w, &textRect.h);
             textRect.x = shiftedBox.x + 5;
             textRect.y = shiftedBox.y + (shiftedBox.h - textRect.h) / 2;
             SDL_RenderCopy(rend, txtTexture, nullptr, &textRect);
@@ -1598,13 +1598,13 @@ public:
 
     bool isActive() const {return active; }
 
-    bool mouseIn(int mx, int my) const {
+    bool mouseIn (int mx, int my) const {
         return (mx >= box.x && mx <= box.x + box.w &&
-                my >= box.y && my <= box.y + box.h);
+                my >= box.y && my <= box.y + box.h );
     }
 
     SDL_Rect gBox() const { return box; }
-    void setBox(int x, int y, int w, int h) { box = {x, y, w, h}; }
+    void setBox (int x, int y, int w, int h) { box = {x, y, w, h}; }
 };
 
 class BUTTONS {
@@ -1618,20 +1618,21 @@ private:
     SDL_Rect textRect;
 
 public:
-    BUTTONS(SDL_Renderer* renderer, TTF_Font* font, int x, int y, int w, int h,
+    BUTTONS(SDL_Renderer* renderer, TTF_Font* font, int x,int y, int w, int h,
             SDL_Color nColor, SDL_Color hColor, string text) {
-        rect = {x, y, w, h};
+
+        rect ={x, y, w, h};
         normalColor = nColor;
         hoverColor = hColor;
-        hover = false;
+        hover = false ;
         txtTexture = nullptr;
 
         if (font) {
-            SDL_Color textColor = {20, 20, 20, 255};
-            SDL_Surface* textSurface = TTF_RenderText_Blended(font, text.c_str(), textColor);
+            SDL_Color textColor = {20, 20, 20, 255} ;
+            SDL_Surface* textSurface = TTF_RenderText_Blended(font, text.c_str (), textColor);
 
             if (textSurface) {
-                txtTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+                txtTexture= SDL_CreateTextureFromSurface (renderer, textSurface);
                 textRect.w = textSurface->w;
                 textRect.h = textSurface-> h;
 
@@ -1644,43 +1645,43 @@ public:
 
     ~BUTTONS() {
         if (txtTexture) {
-            SDL_DestroyTexture(txtTexture);
+            SDL_DestroyTexture( txtTexture );
         }
     }
 
-    void events(const SDL_Event& e) {
-        if (e.type == SDL_MOUSEMOTION) {
+    void events(const SDL_Event& e){
+        if (e.type == SDL_MOUSEMOTION){
             int mx = e.motion.x;
             int my = e.motion.y;
-            hover = (mx >= rect.x && mx <= rect.x + rect.w &&
+            hover = (mx >= rect.x && mx<= rect.x + rect.w &&
                      my >= rect.y && my <= rect.y + rect.h);
         }
     }
 
-    bool click(const SDL_Event& e) const {
-        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+    bool click (const SDL_Event& e) const {
+        if (e.type ==SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             int mx = e.button.x;
             int my = e.button.y;
-            return (mx >= rect.x && mx <= rect.x + rect.w &&
+            return (mx >= rect.x && mx<= rect.x + rect.w &&
                     my >= rect.y && my <= rect.y + rect.h);
         }
         return false;
     }
 
-    void draw(SDL_Renderer* renderer) const {
+    void draw (SDL_Renderer* renderer) const {
         if (hover) {
-            SDL_SetRenderDrawColor(renderer, hoverColor.r, hoverColor.g, hoverColor.b, hoverColor.a);
+            SDL_SetRenderDrawColor(renderer,hoverColor.r, hoverColor.g, hoverColor.b, hoverColor.a);
         }
         else {
-            SDL_SetRenderDrawColor(renderer, normalColor.r, normalColor.g, normalColor.b, normalColor.a);
+            SDL_SetRenderDrawColor(renderer,normalColor.r, normalColor.g, normalColor.b, normalColor.a);
         }
         SDL_RenderFillRect(renderer, &rect);
 
-        SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+        SDL_SetRenderDrawColor(renderer, 80,80, 80, 255);
         SDL_RenderDrawRect(renderer, &rect);
 
         if (txtTexture) {
-            SDL_RenderCopy(renderer, txtTexture, nullptr, &textRect);
+            SDL_RenderCopy(renderer, txtTexture , nullptr, &textRect);
         }
     }
 
@@ -1691,22 +1692,22 @@ public:
         };
 
         if (hover) {
-            SDL_SetRenderDrawColor(renderer, hoverColor.r, hoverColor.g, hoverColor.b, hoverColor.a);
+            SDL_SetRenderDrawColor(renderer,hoverColor.r, hoverColor.g,hoverColor.b, hoverColor.a);
         }
         else {
-            SDL_SetRenderDrawColor(renderer, normalColor.r, normalColor.g, normalColor.b, normalColor.a);
+            SDL_SetRenderDrawColor(renderer,normalColor.r, normalColor.g, normalColor.b, normalColor.a);
         }
         SDL_RenderFillRect(renderer, &shiftedRect);
-        SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+        SDL_SetRenderDrawColor(renderer, 80,80, 80, 255) ;
         SDL_RenderDrawRect(renderer, &shiftedRect);
 
         if (txtTexture) {
-            SDL_RenderCopy(renderer, txtTexture, nullptr, &shiftedTextRect);
+            SDL_RenderCopy(renderer , txtTexture, nullptr, &shiftedTextRect);
         }
     }
 
     SDL_Rect gRect() const { return rect;}
-    void setRect(int x, int y, int w, int h) { rect = {x, y, w, h}; textRect.x = x + (w - textRect.w)/2; textRect.y = y + (h - textRect.h)/2; }
+    void setRect(int x, int y, int w, int h ) { rect = {x, y, w, h}; textRect.x = x + (w - textRect.w)/2; textRect.y = y + (h - textRect.h)/2; }
 };
 
 class PROTEUS {
@@ -1715,9 +1716,9 @@ private:
     SDL_Window* window;
     SDL_Renderer*renderer;
     TTF_Font* font;
-    TTF_Font* titleFont;
+    TTF_Font* titleFont ;
     TTF_Font* libFont;
-    bool running;
+    bool running ;
     app currentState;
 
     BUTTONS* btnNewP;
@@ -1749,27 +1750,27 @@ private:
     int canvasHeight;
     string penProjectName;
 
-    int worldMinX, worldMaxX;
-    int worldMinY, worldMaxY;
+    int worldMinX,worldMaxX;
+    int worldMinY,worldMaxY;
 
     int grdSz;
     float zmLvl;
-    int panX, panY;
+    int panX , panY;
     bool isPan;
     int panStartX, panStartY;
     int panOffXst, panOffYst;
-    int statH;
+    int statH ;
     int winW, winH;
     int mseX, mseY;
 
-    SDL_Rect zoomRct;
+    SDL_Rect zoomRct ;
 
     bool showGrid;
     Tool currentTool;
 
-    int tlbrH;
-    int pnlLW, pnlRW;
-    int vpX, vpY, vpW, vpH;
+    int tlbrH ;
+    int pnlLW , pnlRW;
+    int vpX, vpY, vpW , vpH;
 
     vector<BUTTONS*> tlbrBtns;
     vector<string> libItms;
@@ -1786,7 +1787,7 @@ private:
     txtIn* searchBox;
     string searchFilter;
     vector<string> activeComps;
-    SDL_Rect previewRect;
+    SDL_Rect previewRect ;
     bool showLib;
     bool showProp;
     int activeCompsY;
@@ -1815,34 +1816,34 @@ private:
     bool hoveredPinActive;
 
     struct ComponentRuntime {
-        vector<double> pinVoltages;
-        double outputVoltage = std::numeric_limits<double>::quiet_NaN();
-        double pendingOutput = std::numeric_limits<double>::quiet_NaN();
-        Uint32 pendingDue = 0;
-        bool hasPending = false;
-        bool pressed = false;
-        LogicLevel previousClock = LogicLevel::LOW;
-        bool ledOn = false;
-        vector<bool> segments = vector<bool>(8, false);
+        vector<double> pinVoltageValues;
+        double outputVoltageValue = std::numeric_limits<double>::quiet_NaN();
+        double pendingOutputValue = std::numeric_limits<double>::quiet_NaN();
+        Uint32 pendingOutputTime = 0;
+        bool hasPendingOutput = false;
+        bool isPressed = false;
+        LogicLevel previousClockLevel = LogicLevel::LOW;
+        bool ledState = false;
+        vector<bool> segmentStateList = vector<bool>(8, false);
     };
 
-    unordered_map<int, ComponentRuntime> componentRuntime;
-    unordered_map<int, ADCModel> adcModels;
-    unordered_map<int, DACModel> dacModels;
-    unordered_map<int, Microcontroller> microcontrollerModels;
-    unordered_map<int, string> attemptedFirmwarePaths;
-    unordered_map<int, ExternalMemory> externalMemoryModels;
-    unordered_map<int, bool> externalMemoryPreviousWrite;
-    unordered_map<int, LCD16x2> lcdModels;
-    unordered_map<int, MatrixKeypad4x4> keypadModels;
-    int nextComponentId;
-    vector<double> wireVoltages;
-    vector<string> simulationLog;
-    set<string> lastSimulationWarnings;
+    unordered_map<int, ComponentRuntime> runtimeData;
+    unordered_map<int, ADCModel> adcData;
+    unordered_map<int, DACModel> dacData;
+    unordered_map<int, Microcontroller> microcontrollerData;
+    unordered_map<int, string> checkedFirmwarePaths;
+    unordered_map<int, ExternalMemory> externalMemoryData;
+    unordered_map<int, bool> memoryWriteState;
+    unordered_map<int, LCD16x2> lcdData;
+    unordered_map<int, MatrixKeypad4x4> keypadData;
+    int nextComponentNumber;
+    vector<double> wireVoltageValues;
+    vector<string> simulationLogLines;
+    set<string> lastWarningSet;
 
-    SimulationState simulationState;
-    Uint32 simulationTimeMs;
-    Uint32 lastSimulationRealTick;
+    SimulationState simulationStatus;
+    Uint32 simulationTime;
+    Uint32 lastRealTimeTick;
     void updateWorldBounds() {
         worldMinX = -canvasWidth/ 2;
         worldMaxX = canvasWidth/ 2;
@@ -1855,20 +1856,20 @@ private:
     int scrToWldX(int sx) const{ return worldMinX + (int)((sx - vpX - panX)/ zmLvl); }
     int scrToWldY(int sy) const { return worldMaxY - (int)((sy - vpY - panY) / zmLvl); }
 
-    int snapToGrid(int val) const{
+    int snapToGrid (int val) const{
         int offset = val - worldMinX;
-        int snappedOffset = ((offset + grdSz / 2)/ grdSz) * grdSz;
+        int snappedOffset =((offset + grdSz / 2)/ grdSz) * grdSz;
         return worldMinX + snappedOffset;
     }
 
-    void clampToCanvas(int& x, int& y) const{
+    void clampToCanvas (int& x, int& y) const{
         if (x < worldMinX) x = worldMinX;
         if (x > worldMaxX) x = worldMaxX;
-        if (y < worldMinY) y = worldMinY;
-        if (y > worldMaxY) y = worldMaxY;
+        if (y < worldMinY) y= worldMinY;
+        if (y > worldMaxY) y= worldMaxY;
     }
 
-    void updateViewport() {
+    void updateViewport (){
         int leftPanelWidth = showLib ? pnlLW :0;
         int rightPanelWidth = showProp ? pnlRW :0;
         vpX = leftPanelWidth;
@@ -1877,7 +1878,7 @@ private:
         vpH = winH - tlbrH - statH;
     }
 
-    void fitWindowToCanvas() {
+    void fitWindowToCanvas () {
         updateViewport();
     }
 
@@ -1909,7 +1910,7 @@ private:
         return path;
     }
 
-    void updateWiresForMovingComp() {
+    void updateWiresForMovingComp(){
         if (selectedIndices.empty()) return;
         for (size_t j = 0; j< selectedIndices.size(); ++j) {
             size_t idx = selectedIndices [j];
@@ -1921,36 +1922,36 @@ private:
             for (auto& wire :wires) {
                 for (size_t pi = 0; pi < oldPins.size(); ++pi) {
                     if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) {
-                        wire.front() = {newPins[pi].x, newPins[pi].y};
+                        wire.front() ={newPins[pi].x, newPins[pi].y};
                         break;
                     }
-                    if (wire.back().x == oldPins[pi].x && wire.back().y == oldPins[pi].y) {
+                    if (wire.back().x == oldPins[pi].x&& wire.back().y == oldPins[pi].y) {
                         wire.back() = {newPins[pi].x, newPins[pi].y};
                         break;
                     }
                 }
             }
         }
-        for (auto& wire : wires) {
-            if (wire.size() >= 2) {
+        for (auto& wire : wires){
+            if (wire.size() >=2) {
                 wire = calcOrthoPath(wire.front(), wire.back());
             }
         }
     }
 
-    void moveWiresSmooth(int deltaX, int deltaY) {
+    void moveWiresSmooth( int deltaX,int deltaY ) {
         if (selectedIndices.empty()) return;
         set<int> movedWires;
         for (size_t j = 0; j < selectedIndices.size(); ++j) {
-            size_t idx = selectedIndices[j];
+            size_t idx =selectedIndices[j];
             if (idx >= placedComponents.size()) continue;
             placedComp oldComp = dragSnapshots[j];
-            vector<SDL_Point> oldPins = gCompPinPos(oldComp);
-            for (size_t wi = 0; wi < wires.size(); ++wi) {
+            vector<SDL_Point> oldPins = gCompPinPos (oldComp);
+            for (size_t wi = 0; wi < wires.size() ; ++wi) {
                 if (movedWires.count(wi)) continue;
                 auto& wire = wires[wi];
                 bool found = false;
-                for (size_t pi = 0; pi < oldPins.size(); ++pi) {
+                for (size_t pi = 0 ; pi < oldPins.size(); ++pi) {
                     if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) {
                         for (auto& pt : wire) {
                             pt.x += deltaX;
@@ -1962,7 +1963,7 @@ private:
                     if (wire.back().x == oldPins[pi] .x && wire.back().y == oldPins[pi].y) {
                         for (auto& pt : wire) {
                             pt.x += deltaX;
-                            pt.y += deltaY;
+                            pt.y +=deltaY;
                         }
                         found = true;
                         break;
@@ -1973,11 +1974,11 @@ private:
         }
     }
 
-    bool segmentsIntersect(SDL_Point p1, SDL_Point p2, SDL_Point q1, SDL_Point q2, SDL_Point& intersection) {
+    bool segmentsIntersect(SDL_Point p1 , SDL_Point p2, SDL_Point q1,SDL_Point q2, SDL_Point& intersection) {
         int d1x = p2.x- p1.x, d1y = p2.y - p1.y;
         int d2x = q2.x - q1.x, d2y = q2.y - q1.y;
         int cross = d1x * d2y - d1y * d2x;
-        if (cross == 0) return false;
+        if (cross ==0) return false;
         int dx = q1.x - p1.x, dy = q1.y - p1.y;
         float t = float(dx * d2y - dy * d2x) / cross;
         float u = float(dx * d1y - dy * d1x) / cross;
@@ -1989,13 +1990,13 @@ private:
         return false;
     }
 
-    bool pointNear(SDL_Point a, SDL_Point b, int threshold = 6) {
-        int dx = a.x - b.x, dy = a.y - b.y;
+    bool pointNear(SDL_Point a , SDL_Point b, int threshold = 6){
+        int dx = a.x - b.x, dy =a.y - b.y;
         return (dx*dx + dy*dy) <= threshold*threshold;
     }
 
     void removeJunctionsOnWire(const vector<SDL_Point>& wire) {
-        for (int i = (int) junctions.size() - 1; i >= 0; --i) {
+        for (int i = (int) junctions.size () - 1; i >= 0; --i) {
             SDL_Point jpt = junctions[i];
             for (size_t s = 0; s + 1 < wire.size(); ++s) {
                 if (pointToSegmentDist(jpt.x, jpt.y, wire[s].x, wire[s].y, wire[s+1].x, wire[s+1].y) < 4) {
@@ -2006,7 +2007,7 @@ private:
         }
     }
 
-    pair<int, int> componentHalfSize(const placedComp& comp) const {
+    pair<int,int> componentHalfBounds(const placedComp& comp) const {
         if (comp.name == "Microcontroller") return {62, 38};
         if (comp.name == "External Memory") return {66, 46};
         if (comp.name == "LCD 16x2") return {72, 38};
@@ -2015,7 +2016,7 @@ private:
         return {40, 20};
     }
 
-    SDL_Point worldToComponentLocal(const placedComp& comp, int wx, int wy) const {
+    SDL_Point toComponentLocal(const placedComp& comp, int wx, int wy) const {
         int dx = wx - comp.x;
         int dy = wy - comp.y;
         float rad = -comp.angle * 3.14159f / 180.0f;
@@ -2029,8 +2030,8 @@ private:
     }
 
     bool isPointInsideComponent(const placedComp& comp, int wx, int wy) const {
-        SDL_Point local = worldToComponentLocal(comp, wx, wy);
-        auto size = componentHalfSize(comp);
+        SDL_Point local = toComponentLocal(comp, wx, wy);
+        auto size = componentHalfBounds(comp);
         return local.x >= -size.first && local.x <= size.first &&
                local.y >= -size.second && local.y <= size.second;
     }
@@ -2048,10 +2049,10 @@ private:
             int fy = (int)std::lround(rx * sine + ry * cosine);
             return {wldToScrX(comp.x + fx), wldToScrY(comp.y + fy)};
         };
-        auto size = componentHalfSize(comp);
+        auto size = componentHalfBounds(comp);
         corners[0] = transform(-size.first, -size.second);
-        corners[1] = transform(size.first, -size.second);
-        corners[2] = transform(size.first, size.second);
+        corners[1] = transform( size.first, -size.second);
+        corners[2] = transform( size.first, size.second);
         corners[3] = transform(-size.first, size.second);
     }
 
@@ -2062,12 +2063,12 @@ private:
         SDL_SetRenderDrawColor(renderer, 255, 255, 0, 60);
         SDL_Vertex vertices[5];
         for (int i = 0; i < 4; i++) {
-            vertices[i].position.x = (float)corners[i].x;
+            vertices[i].position.x = (float)corners[i].x ;
             vertices[i].position.y = (float)corners[i].y;
             vertices[i].color = {255, 255, 0, 60};
         }
-        int indices[] = {0, 1, 2, 2, 3, 0};
-        if (SDL_RenderGeometry(renderer, nullptr, vertices, 4, indices, 6) < 0) {
+        int indices[] = {0, 1, 2, 2, 3, 0} ;
+        if (SDL_RenderGeometry (renderer, nullptr, vertices, 4, indices, 6) < 0) {
             SDL_Rect bb = {corners[0].x, corners[0].y, 0, 0};
             for (int i = 1; i < 4;i++) {
                 if (corners[i].x < bb.x) bb.x = corners[i].x;
@@ -2082,10 +2083,10 @@ private:
         SDL_Point outline[5];
         for (int i = 0; i < 4; i++) outline[i] = corners[i];
         outline[4] = corners[0];
-        SDL_RenderDrawLines(renderer, outline, 5);
+        SDL_RenderDrawLines(renderer, outline,5);
     }
 
-    enum UndoType {COMP_PLACE, COMP_DELETE, COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM, WIRE_ADD, WIRE_DELETE, WIRE_JUNCTION_ADD, WIRE_JUNCTION_REMOVE};
+    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM,WIRE_ADD, WIRE_DELETE, WIRE_JUNCTION_ADD, WIRE_JUNCTION_REMOVE};
     struct UndoAction{
         UndoType type;
         placedComp comp;
@@ -2093,7 +2094,7 @@ private:
         string compName;
         int activeIndex;
         vector<placedComp> compsBefore;
-        vector<placedComp> compsAfter;
+        vector<placedComp> compsAfter ;
         vector<vector<SDL_Point>> wiresBefore;
         vector<vector <SDL_Point>> wiresAfter;
         vector<SDL_Point> junctionsBefore;
@@ -2111,7 +2112,7 @@ private:
     size_t lastClickedIndex;
     Uint32 lastClickTime;
 
-    void pushUndo(const UndoAction& action) {
+    void pushUndo (const UndoAction& action){
         undoStack.push_back(action);
         redoStack.clear();
     }
@@ -2120,7 +2121,7 @@ private:
         if (undoStack.empty()) return;
         UndoAction act = undoStack.back();
         undoStack.pop_back();
-        if (act.type == COMP_PLACE) {
+        if (act.type ==COMP_PLACE) {
             for (size_t i = 0; i < placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents. erase(placedComponents.begin() + i);
@@ -2128,27 +2129,27 @@ private:
                 }
             }
             wires = act.wiresBefore;
-            junctions = act.junctionsBefore;
+            junctions =act.junctionsBefore;
             redoStack.push_back(act);
         }
-        else if (act.type == COMP_DELETE) {
+        else if (act.type== COMP_DELETE) {
             placedComponents.push_back(act.comp);
             wires = act.wiresBefore;
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            redoStack.push_back(act) ;
         }
         else if (act.type == ACTIVE_ADD) {
-            auto it = find(activeComps.begin(), activeComps.end(), act.compName);
+            auto it = find(activeComps.begin( ), activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 activeComps.erase(it);
                 UndoAction redoAct;
-                redoAct.type = ACTIVE_ADD;
+                redoAct.type = ACTIVE_ADD ;
                 redoAct.compName = act.compName;
                 redoStack.push_back(redoAct);
             }
         }
         else if (act.type == ACTIVE_REMOVE) {
-            if (act.activeIndex >= 0 && act.activeIndex <= (int)activeComps.size()) {
+            if (act.activeIndex >= 0 && act.activeIndex<= (int)activeComps.size()) {
                 activeComps.insert(activeComps.begin() + act.activeIndex, act.compName);
                 UndoAction redoAct;
                 redoAct.type = ACTIVE_REMOVE;
@@ -2157,7 +2158,7 @@ private:
                 redoStack.push_back(redoAct);
             }
         }
-        else if (act.type == COMP_MOVE) {
+        else if (act.type == COMP_MOVE){
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
             redoStack.push_back(act);
@@ -2165,28 +2166,28 @@ private:
         else if (act.type == COMP_TRANSFORM) {
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
-            redoStack.push_back(act);
+            redoStack.push_back (act);
         }
         else if (act.type == COMP_EDIT) {
             size_t idx = -1;
-            for (size_t i = 0; i < placedComponents.size(); ++i) {
-                if (placedComponents[i].name == act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
+            for(size_t i = 0; i < placedComponents.size(); ++i){
+                if (placedComponents[i].name== act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     idx = i;
                     break;
                 }
             }
-            if (idx < placedComponents.size()) {
+            if (idx < placedComponents.size() ) {
                 placedComponents[idx] = act.oldComp;
                 UndoAction redoAct;
                 redoAct.type = COMP_EDIT;
                 redoAct.oldComp = act.oldComp;
                 redoAct.comp = act.comp;
-                redoStack.push_back(redoAct);
+                redoStack.push_back (redoAct);
             }
         }
         else if (act.type == WIRE_ADD) {
             wires = act.wiresBefore;
-            junctions = act.junctionsBefore;
+            junctions = act.junctionsBefore ;
             redoStack.push_back(act);
         }
         else if (act.type == WIRE_DELETE) {
@@ -2194,13 +2195,13 @@ private:
             junctions = act.junctionsBefore;
             redoStack.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_ADD) {
+        else if (act.type== WIRE_JUNCTION_ADD) {
             junctions = act.junctionsBefore;
             redoStack.push_back(act);
         }
         else if (act.type == WIRE_JUNCTION_REMOVE) {
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            redoStack.push_back (act);
         }
     }
 
@@ -2208,14 +2209,14 @@ private:
         if (redoStack.empty()) return;
         UndoAction act = redoStack.back();
         redoStack.pop_back();
-        if (act.type == COMP_PLACE) {
-            placedComponents.push_back(act.comp);
+        if (act.type == COMP_PLACE){
+            placedComponents.push_back(act.comp) ;
             wires = act.wiresAfter;
-            junctions = act.junctionsAfter;
+            junctions= act.junctionsAfter;
             undoStack.push_back(act);
         }
         else if (act.type == COMP_DELETE) {
-            for (size_t i = 0; i< placedComponents.size(); ++i) {
+            for(size_t i = 0; i< placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents [i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents.erase(placedComponents.begin()+ i);
                     break;
@@ -2228,15 +2229,15 @@ private:
         else if (act.type == ACTIVE_ADD) {
             activeComps.push_back(act.compName);
             UndoAction undoAct;
-            undoAct.type = ACTIVE_ADD;
+            undoAct.type =ACTIVE_ADD;
             undoAct.compName = act.compName;
-            undoStack.push_back(undoAct);
+            undoStack.push_back (undoAct);
         }
         else if (act.type == ACTIVE_REMOVE) {
-            auto it = find(activeComps.begin(), activeComps.end(), act.compName);
+            auto it = find(activeComps.begin() , activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 int idx = it - activeComps.begin();
-                activeComps.erase(it);
+                activeComps.erase(it );
                 UndoAction undoAct;
                 undoAct.type = ACTIVE_REMOVE;
                 undoAct.compName = act.compName;
@@ -2244,31 +2245,31 @@ private:
                 undoStack.push_back(undoAct);
             }
         }
-        else if (act.type == COMP_MOVE) {
+        else if (act.type ==COMP_MOVE) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
             undoStack.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM) {
+        else if (act.type == COMP_TRANSFORM ) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
             undoStack.push_back(act);
         }
         else if (act.type == COMP_EDIT) {
-            size_t idx = -1;
+            size_t idx =-1;
             for (size_t i = 0; i < placedComponents.size();++i) {
                 if (placedComponents[i].name == act.oldComp.name && placedComponents[i] .x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
                     idx = i;
                     break;
                 }
             }
-            if (idx < placedComponents.size()) {
+            if (idx < placedComponents.size()){
                 placedComponents[idx] = act.comp;
                 undoStack.push_back(act);
             }
         }
         else if (act.type == WIRE_ADD) {
-            wires = act.wiresAfter;
+            wires =act.wiresAfter;
             junctions = act.junctionsAfter;
             undoStack.push_back(act);
         }
@@ -2277,11 +2278,11 @@ private:
             junctions = act.junctionsAfter;
             undoStack.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_ADD) {
+        else if (act.type == WIRE_JUNCTION_ADD){
             junctions = act .junctionsAfter;
             undoStack.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_REMOVE) {
+        else if ( act.type == WIRE_JUNCTION_REMOVE) {
             junctions = act.junctionsAfter;
             undoStack.push_back(act);
         }
@@ -2296,19 +2297,19 @@ private:
 
     void drawGrid() {
         if (!showGrid)
-            return;
-        int wL = scrToWldX(vpX), wT = scrToWldY(vpY);
-        int wR = scrToWldX(vpX+vpW), wB = scrToWldY(vpY+vpH);
+            return ;
+        int wL = scrToWldX(vpX), wT = scrToWldY (vpY);
+        int wR= scrToWldX (vpX+vpW), wB = scrToWldY(vpY+vpH);
         int startX = ((wL - worldMinX) / grdSz) * grdSz + worldMinX;
         int startY = worldMinY + ((wT - worldMinY) / grdSz) * grdSz;
-        SDL_SetRenderDrawColor(renderer, 200, 200, 200, 60);
-        for (int x = startX; x <= wR; x += grdSz) {
+        SDL_SetRenderDrawColor (renderer, 200,200,200, 60);
+        for (int x = startX; x <= wR ; x += grdSz) {
             int sx = wldToScrX(x);
             if (sx >= vpX && sx < vpX+vpW)
                 SDL_RenderDrawLine(renderer, sx, vpY, sx, vpY+vpH);
         }
-        for (int y = startY; y >= wB; y -= grdSz) {
-            int sy = wldToScrY(y);
+        for (int y = startY; y >= wB ; y -= grdSz){
+            int sy = wldToScrY(y) ;
             if (sy >= vpY && sy < vpY+vpH)
                 SDL_RenderDrawLine(renderer, vpX, sy, vpX+ vpW, sy);
         }
@@ -2317,36 +2318,36 @@ private:
         if (ox >= vpX && ox < vpX+vpW && oy >= vpY && oy < vpY+vpH) {
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_Rect hBar = {ox - 6, oy - 1, 13, 3};
-            SDL_Rect vBar = {ox - 1, oy - 6, 3, 13};
+            SDL_Rect vBar= {ox - 1, oy - 6, 3, 13};
             SDL_RenderFillRect(renderer, &hBar);
             SDL_RenderFillRect(renderer, &vBar);
         }
     }
 
     void drawStatusBar() {
-        SDL_Rect bar = {0, winH - statH, winW, statH};
-        SDL_SetRenderDrawColor(renderer, 60, 60, 60, 255);
+        SDL_Rect bar ={0, winH - statH,winW, statH};
+        SDL_SetRenderDrawColor(renderer, 60, 60,60,255);
         SDL_RenderFillRect(renderer, &bar);
         if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+vpH) {
-            int wx = scrToWldX(mseX), wy = scrToWldY(mseY);
+            int wx = scrToWldX(mseX) , wy= scrToWldY(mseY);
             string txt = "X: " + to_string(wx)+ "  Y: " + to_string(wy);
-            drawTxt(txt, 10, winH - statH + 5, {220, 220, 220, 255});
+            drawTxt(txt, 10, winH - statH + 5, {220,220,220,255});
         }
         else {
-            drawTxt("Move mouse over canvas", 10, winH - statH + 5, {180, 180, 180, 255});
+            drawTxt("Move mouse over canvas", 10, winH - statH + 5, {180,180,180,255});
         }
 
-        if (!simulationLog.empty()) {
-            drawTxt(simulationLog.back(), 185, winH - statH + 5, {255, 190, 70, 255}, libFont);
+        if (!simulationLogLines.empty()) {
+            drawTxt(simulationLogLines.back(), 185, winH - statH + 5, {255,190,70,255}, libFont);
         }
 
-        string zoomTxt = to_string((int)(zmLvl*100)) + "%";
-        int tw, th;
-        TTF_SizeText(font, zoomTxt.c_str(), &tw, &th);
-        int zx = winW - tw - 10;
-        int zy = winH - statH + 5;
-        zoomRct = {zx - 5, zy - 2, tw + 10, th + 4};
-        drawTxt(zoomTxt, zx, zy, {220, 220, 220, 255});
+        string zoomTxt = to_string((int)(zmLvl*100)) + "%" ;
+        int tw, th ;
+        TTF_SizeText(font, zoomTxt.c_str(), &tw, &th) ;
+        int zx = winW - tw - 10 ;
+        int zy = winH - statH + 5 ;
+        zoomRct = {zx - 5, zy - 2, tw + 10, th + 4} ;
+        drawTxt (zoomTxt, zx, zy, {220,220,220,255}) ;
     }
 
     void drawTxt(const string& str, int x, int y, SDL_Color color) const {
@@ -2355,9 +2356,9 @@ private:
         SDL_Surface* surf = TTF_RenderText_Blended(font, str.c_str(), color);
         if (surf) {
             SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
-            SDL_Rect dest = {x, y, surf->w, surf->h};
+            SDL_Rect dest ={x, y, surf->w, surf->h};
             SDL_RenderCopy(renderer, tex, nullptr, &dest);
-            SDL_FreeSurface(surf);
+            SDL_FreeSurface (surf);
             SDL_DestroyTexture(tex);
         }
     }
@@ -2365,27 +2366,27 @@ private:
     void drawTxt(const string& str, int x, int y, SDL_Color color, TTF_Font* fnt) const {
         if (!fnt)
             return;
-        SDL_Surface* surf = TTF_RenderText_Blended(fnt, str.c_str(), color);
+        SDL_Surface* surf = TTF_RenderText_Blended (fnt, str.c_str(), color);
         if (surf) {
             SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
-            SDL_Rect dest = {x, y, surf-> w, surf->h};
+            SDL_Rect dest ={x, y, surf-> w, surf->h};
             SDL_RenderCopy(renderer, tex, nullptr, &dest);
-            SDL_FreeSurface(surf);
+            SDL_FreeSurface (surf);
             SDL_DestroyTexture(tex);
         }
     }
 
-    string upperCopy(string text) const {
+    string upperText(string text) const {
         for (char& c : text) c = (char)std::toupper((unsigned char)c);
         return text;
     }
 
-    string lowerCopy(string text) const {
+    string lowerText(string text) const {
         for (char& c : text) c = (char)std::tolower((unsigned char)c);
         return text;
     }
 
-    double parseFirstNumber(const string& text, double fallback) const {
+    double firstNumber(const string& text, double fallback) const {
         for (size_t i = 0; i < text.size(); ++i) {
             char c = text[i];
             if (std::isdigit((unsigned char)c) || c == '-' || c == '+' || c == '.') {
@@ -2397,28 +2398,28 @@ private:
         return fallback;
     }
 
-    double parseNamedNumber(const string& text, const string& key, double fallback) const {
-        string low = lowerCopy(text);
-        string target = lowerCopy(key) + "=";
-        size_t pos = low.find(target);
+    double namedNumber(const string& text, const string& key, double fallback) const {
+        string low = lowerText(text);
+        string targetValue = lowerText(key) + "=";
+        size_t pos = low.find(targetValue);
         if (pos == string::npos) return fallback;
-        pos += target.size();
+        pos += targetValue.size();
         char* end = nullptr;
         double value = std::strtod(text.c_str() + pos, &end);
         return end == text.c_str() + pos ? fallback : value;
     }
 
-    int parseNamedInteger(const string& text, const string& key, int fallback) const {
-        double value = parseNamedNumber(text, key, fallback);
+    int namedInteger(const string& text, const string& key, int fallback) const {
+        double value = namedNumber(text, key, fallback);
         return (int)std::lround(value);
     }
 
-    string parseNamedString(const string& text, const string& key, const string& fallback = "") const {
-        string low = lowerCopy(text);
-        string target = lowerCopy(key) + "=";
-        size_t pos = low.find(target);
+    string namedText(const string& text, const string& key, const string& fallback = "") const {
+        string low = lowerText(text);
+        string targetValue = lowerText(key) + "=";
+        size_t pos = low.find(targetValue);
         if (pos == string::npos) return fallback;
-        pos += target.size();
+        pos += targetValue.size();
         size_t end = text.find(';', pos);
         string result = text.substr(pos, end == string::npos ? string::npos : end - pos);
         while (!result.empty() && std::isspace((unsigned char)result.front())) result.erase(result.begin());
@@ -2426,107 +2427,107 @@ private:
         return result;
     }
 
-    void clearAdvancedRuntime() {
-        adcModels.clear();
-        dacModels.clear();
-        microcontrollerModels.clear();
-        attemptedFirmwarePaths.clear();
-        externalMemoryModels.clear();
-        externalMemoryPreviousWrite.clear();
-        lcdModels.clear();
-        keypadModels.clear();
+    void clearDeviceStates() {
+        adcData.clear();
+        dacData.clear();
+        microcontrollerData.clear();
+        checkedFirmwarePaths.clear();
+        externalMemoryData.clear();
+        memoryWriteState.clear();
+        lcdData.clear();
+        keypadData.clear();
     }
 
-    bool sameVoltage(double a, double b) const {
+    bool voltageIsSame(double a, double b) const {
         if (std::isnan(a) && std::isnan(b)) return true;
         if (std::isnan(a) || std::isnan(b)) return false;
         return std::fabs(a - b) < 0.01;
     }
 
-    void applyComponentConfig(placedComp& comp) {
+    void applyComponentSettings(placedComp& comp) {
         if (comp.name == "AND Gate" || comp.name == "OR Gate" ||
             comp.name == "NAND Gate" || comp.name == "XOR Gate") {
-            comp.inputCount = std::max(2, std::min(8, parseNamedInteger(comp.value, "inputs", comp.inputCount)));
-            comp.propagationDelayMs = std::max(0.0, parseNamedNumber(comp.value, "delay", comp.propagationDelayMs));
+            comp.inputCountValue = std::max(2, std::min(8, namedInteger(comp.value, "inputs", comp.inputCountValue)));
+            comp.propagationDelay = std::max(0.0, namedNumber(comp.value, "delay", comp.propagationDelay));
         } else if (comp.name == "NOT Gate" || comp.name == "D Flip-Flop") {
-            comp.inputCount = comp.name == "NOT Gate" ? 1 : 2;
-            comp.propagationDelayMs = std::max(0.0, parseNamedNumber(comp.value, "delay", comp.propagationDelayMs));
+            comp.inputCountValue = comp.name == "NOT Gate" ? 1 : 2;
+            comp.propagationDelay = std::max(0.0, namedNumber(comp.value, "delay", comp.propagationDelay));
         } else if (comp.name == "ADC" || comp.name == "DAC") {
-            comp.inputCount = std::max(2, std::min(12, parseNamedInteger(comp.value, "bits", comp.inputCount > 1 ? comp.inputCount : 8)));
-            comp.propagationDelayMs = std::max(0.0, parseNamedNumber(comp.value, "delay", comp.propagationDelayMs));
+            comp.inputCountValue = std::max(2, std::min(12, namedInteger(comp.value, "bits", comp.inputCountValue > 1 ? comp.inputCountValue : 8)));
+            comp.propagationDelay = std::max(0.0, namedNumber(comp.value, "delay", comp.propagationDelay));
         } else if (comp.name == "Switch") {
-            string state = upperCopy(comp.value);
+            string state = upperText(comp.value);
             if (state.find("CLOSED") != string::npos || state.find("ON") != string::npos)
-                comp.switchState = true;
+                comp.switchClosed = true;
             else if (state.find("OPEN") != string::npos || state.find("OFF") != string::npos)
-                comp.switchState = false;
+                comp.switchClosed = false;
         }
     }
 
-    void initializeComponent(placedComp& comp) {
-        if (comp.id <= 0) comp.id = nextComponentId++;
-        else nextComponentId = std::max(nextComponentId, comp.id + 1);
-        if (comp.value.empty()) comp.value = ComponentLibrary::get(comp.name).defaultValue();
-        applyComponentConfig(comp);
-        if (componentRuntime.find(comp.id) == componentRuntime.end())
-            componentRuntime[comp.id] = ComponentRuntime();
+    void initComponent(placedComp& comp) {
+        if (comp.id <= 0) comp.id = nextComponentNumber++;
+        else nextComponentNumber = std::max(nextComponentNumber, comp.id + 1);
+        if (comp.value.empty()) comp.value = ComponentLibrary::getComponentInfo(comp.name).getDefaultSetting();
+        applyComponentSettings(comp);
+        if (runtimeData.find(comp.id) == runtimeData.end())
+            runtimeData[comp.id] = ComponentRuntime();
         if (comp.name == "ADC") {
-            adcModels[comp.id].configure(comp.inputCount, comp.propagationDelayMs);
+            adcData[comp.id].setupModel(comp.inputCountValue, comp.propagationDelay);
         }
         if (comp.name == "DAC") {
-            dacModels[comp.id].configure(comp.inputCount, comp.propagationDelayMs);
+            dacData[comp.id].setupModel(comp.inputCountValue, comp.propagationDelay);
         }
         if (comp.name == "Microcontroller") {
-            microcontrollerModels[comp.id].setClockHz(std::max(0.1, parseNamedNumber(comp.value, "clock", 100.0)));
+            microcontrollerData[comp.id].setCpuClock(std::max(0.1, namedNumber(comp.value, "clock", 100.0)));
         }
         if (comp.name == "External Memory") {
-            int size = std::max(16, std::min(65536, parseNamedInteger(comp.value, "size", 256)));
-            auto it = externalMemoryModels.find(comp.id);
-            if (it == externalMemoryModels.end()) externalMemoryModels.emplace(comp.id, ExternalMemory((size_t)size));
-            else if ((int)it->second.size() != size) it->second.resize((size_t)size);
+            int size = std::max(16, std::min(65536, namedInteger(comp.value, "size", 256)));
+            auto it = externalMemoryData.find(comp.id);
+            if (it == externalMemoryData.end()) externalMemoryData.emplace(comp.id, ExternalMemory((size_t)size));
+            else if ((int)it->second.getMemorySize() != size) it->second.changeMemorySize((size_t)size);
         }
-        if (comp.name == "LCD 16x2") lcdModels.try_emplace(comp.id);
-        if (comp.name == "Keypad 4x4") keypadModels.try_emplace(comp.id);
+        if (comp.name == "LCD 16x2") lcdData.try_emplace(comp.id);
+        if (comp.name == "Keypad 4x4") keypadData.try_emplace(comp.id);
     }
 
-    const ComponentRuntime* findRuntime(int id) const {
-        auto it = componentRuntime.find(id);
-        return it == componentRuntime.end() ? nullptr : &it->second;
+    const ComponentRuntime* runtimeFor(int id) const {
+        auto it = runtimeData.find(id);
+        return it == runtimeData.end() ? nullptr : &it->second;
     }
 
-    void scheduleOutput(placedComp& comp, double target, Uint32 now) {
-        ComponentRuntime& runtime = componentRuntime[comp.id];
-        if (sameVoltage(runtime.outputVoltage, target)) {
-            runtime.hasPending = false;
+    void scheduleGateOutput(placedComp& comp, double targetValue, Uint32 now) {
+        ComponentRuntime& runtimeState = runtimeData[comp.id];
+        if (voltageIsSame(runtimeState.outputVoltageValue, targetValue)) {
+            runtimeState.hasPendingOutput = false;
             return;
         }
-        if (comp.propagationDelayMs <= 0.0) {
-            runtime.outputVoltage = target;
-            runtime.hasPending = false;
+        if (comp.propagationDelay <= 0.0) {
+            runtimeState.outputVoltageValue = targetValue;
+            runtimeState.hasPendingOutput = false;
             return;
         }
-        if (!runtime.hasPending || !sameVoltage(runtime.pendingOutput, target)) {
-            runtime.pendingOutput = target;
-            runtime.pendingDue = now + (Uint32)std::lround(comp.propagationDelayMs);
-            runtime.hasPending = true;
+        if (!runtimeState.hasPendingOutput || !voltageIsSame(runtimeState.pendingOutputValue, targetValue)) {
+            runtimeState.pendingOutputValue = targetValue;
+            runtimeState.pendingOutputTime = now + (Uint32)std::lround(comp.propagationDelay);
+            runtimeState.hasPendingOutput = true;
         }
     }
 
-    void applyPendingOutputs(Uint32 now) {
-        for (auto& item : componentRuntime) {
-            ComponentRuntime& runtime = item.second;
-            if (runtime.hasPending && (int32_t)(now - runtime.pendingDue) >= 0) {
-                runtime.outputVoltage = runtime.pendingOutput;
-                runtime.hasPending = false;
+    void applyScheduledOutputs(Uint32 now) {
+        for (auto& item : runtimeData) {
+            ComponentRuntime& runtimeState = item.second;
+            if (runtimeState.hasPendingOutput && (int32_t)(now - runtimeState.pendingOutputTime) >= 0) {
+                runtimeState.outputVoltageValue = runtimeState.pendingOutputValue;
+                runtimeState.hasPendingOutput = false;
             }
         }
     }
 
-    void addSimulationWarning(set<string>& warnings, const string& warning) {
-        warnings.insert(warning);
+    void addSimulationWarningText(set<string>& warningSet, const string& warningLine) {
+        warningSet.insert(warningLine);
     }
 
-    void drawFilledCircle(int cx, int cy, int radius, SDL_Color color) const {
+    void drawSolidCircle(int cx, int cy, int radius, SDL_Color color) const {
         SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
         for (int y = -radius; y <= radius; ++y) {
             int x = (int)std::sqrt((double)(radius * radius - y * y));
@@ -2534,128 +2535,128 @@ private:
         }
     }
 
-    string simulationStateName() const {
-        if (simulationState == SimulationState::RUNNING) return "RUN";
-        if (simulationState == SimulationState::PAUSED) return "PAUSE";
+    string simulationStateText() const {
+        if (simulationStatus == SimulationState::RUNNING) return "RUN";
+        if (simulationStatus == SimulationState::PAUSED) return "PAUSE";
         return "STOP";
     }
 
-    void clearSimulationValues() {
-        componentRuntime.clear();
-        clearAdvancedRuntime();
-        wireVoltages.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
-        lastSimulationWarnings.clear();
+    void resetSimulationValues() {
+        runtimeData.clear();
+        clearDeviceStates();
+        wireVoltageValues.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
+        lastWarningSet.clear();
     }
 
-    void startSimulation() {
-        if (simulationState == SimulationState::STOPPED) {
-            simulationTimeMs = 0;
-            clearSimulationValues();
+    void startSim() {
+        if (simulationStatus == SimulationState::STOPPED) {
+            simulationTime = 0;
+            resetSimulationValues();
         }
-        simulationState = SimulationState::RUNNING;
-        lastSimulationRealTick = SDL_GetTicks();
+        simulationStatus = SimulationState::RUNNING;
+        lastRealTimeTick = SDL_GetTicks();
         currentTool = Tool::SELECT;
         wireStartActive = false;
-        simulationLog.push_back("Simulation started.");
-        if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+        simulationLogLines.push_back("Simulation started.");
+        if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
     }
 
-    void pauseSimulation() {
-        if (simulationState == SimulationState::RUNNING) {
-            simulationState = SimulationState::PAUSED;
-            simulationLog.push_back("Simulation paused.");
-            if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+    void pauseSim() {
+        if (simulationStatus == SimulationState::RUNNING) {
+            simulationStatus = SimulationState::PAUSED;
+            simulationLogLines.push_back("Simulation paused.");
+            if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
         }
-        lastSimulationRealTick = SDL_GetTicks();
+        lastRealTimeTick = SDL_GetTicks();
     }
 
-    void stopSimulation() {
-        simulationState = SimulationState::STOPPED;
-        simulationTimeMs = 0;
-        lastSimulationRealTick = SDL_GetTicks();
-        clearSimulationValues();
-        simulationLog.push_back("Simulation stopped.");
-        if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+    void stopSim() {
+        simulationStatus = SimulationState::STOPPED;
+        simulationTime = 0;
+        lastRealTimeTick = SDL_GetTicks();
+        resetSimulationValues();
+        simulationLogLines.push_back("Simulation stopped.");
+        if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
     }
 
-    void updateSimulationTime() {
+    void updateSimTime() {
         Uint32 realNow = SDL_GetTicks();
-        if (simulationState == SimulationState::RUNNING) {
-            Uint32 delta = realNow - lastSimulationRealTick;
+        if (simulationStatus == SimulationState::RUNNING) {
+            Uint32 delta = realNow - lastRealTimeTick;
             if (delta > 100) delta = 100;
-            simulationTimeMs += delta;
+            simulationTime += delta;
         }
-        lastSimulationRealTick = realNow;
+        lastRealTimeTick = realNow;
     }
 
-    void updateCircuitSimulation() {
+    void updateCircuit() {
         if (currentState != app::WORKSPACE) return;
-        if (simulationState == SimulationState::STOPPED) return;
-        Uint32 now = simulationTimeMs;
-        for (auto& comp : placedComponents) initializeComponent(comp);
-        applyPendingOutputs(now);
+        if (simulationStatus == SimulationState::STOPPED) return;
+        Uint32 now = simulationTime;
+        for (auto& comp : placedComponents) initComponent(comp);
+        applyScheduledOutputs(now);
 
         struct Dsu {
-            vector<int> parent;
-            vector<int> rank;
+            vector<int> parentList;
+            vector<int> nodeRank;
             int add() {
-                int id = (int)parent.size();
-                parent.push_back(id);
-                rank.push_back(0);
+                int id = (int)parentList.size();
+                parentList.push_back(id);
+                nodeRank.push_back(0);
                 return id;
             }
             int find(int x) {
-                if (parent[x] != x) parent[x] = find(parent[x]);
-                return parent[x];
+                if (parentList[x] != x) parentList[x] = find(parentList[x]);
+                return parentList[x];
             }
-            void unite(int a, int b) {
+            void joinNodes(int a, int b) {
                 a = find(a); b = find(b);
                 if (a == b) return;
-                if (rank[a] < rank[b]) std::swap(a, b);
-                parent[b] = a;
-                if (rank[a] == rank[b]) rank[a]++;
+                if (nodeRank[a] < nodeRank[b]) std::swap(a, b);
+                parentList[b] = a;
+                if (nodeRank[a] == nodeRank[b]) nodeRank[a]++;
             }
-        } dsu;
+        } nodeUnion;
 
-        auto pointKey = [](int x, int y) -> int64_t {
+        auto nodeKey = [](int x, int y) -> int64_t {
             return (int64_t)((uint64_t)(uint32_t)x << 32 | (uint32_t)y);
         };
-        unordered_map<int64_t, int> pointNodes;
-        auto nodeFor = [&](SDL_Point point) -> int {
-            int64_t key = pointKey(point.x, point.y);
-            auto it = pointNodes.find(key);
-            if (it != pointNodes.end()) return it->second;
-            int id = dsu.add();
-            pointNodes[key] = id;
+        unordered_map<int64_t, int> pointNodeMap;
+        auto nodeAt = [&](SDL_Point point) -> int {
+            int64_t key = nodeKey(point.x, point.y);
+            auto it = pointNodeMap.find(key);
+            if (it != pointNodeMap.end()) return it->second;
+            int id = nodeUnion.add();
+            pointNodeMap[key] = id;
             return id;
         };
 
-        vector<vector<int>> componentPinNodes(placedComponents.size());
-        vector<vector<SDL_Point>> componentPins(placedComponents.size());
+        vector<vector<int>> componentPinLinks(placedComponents.size());
+        vector<vector<SDL_Point>> componentPinPositions(placedComponents.size());
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
-            componentPins[ci] = gCompPinPos(placedComponents[ci]);
-            for (const SDL_Point& pin : componentPins[ci])
-                componentPinNodes[ci].push_back(nodeFor(pin));
+            componentPinPositions[ci] = gCompPinPos(placedComponents[ci]);
+            for (const SDL_Point& pin : componentPinPositions[ci])
+                componentPinLinks[ci].push_back(nodeAt(pin));
         }
 
-        vector<int> wireNodes(wires.size(), -1);
+        vector<int> wireNodeList(wires.size(), -1);
         for (size_t wi = 0; wi < wires.size(); ++wi) {
             if (wires[wi].empty()) continue;
-            int first = nodeFor(wires[wi].front());
-            wireNodes[wi] = first;
-            for (const SDL_Point& point : wires[wi]) dsu.unite(first, nodeFor(point));
+            int first = nodeAt(wires[wi].front());
+            wireNodeList[wi] = first;
+            for (const SDL_Point& point : wires[wi]) nodeUnion.joinNodes(first, nodeAt(point));
         }
 
-        for (size_t ci = 0; ci < componentPins.size(); ++ci) {
-            for (size_t pi = 0; pi < componentPins[ci].size(); ++pi) {
-                SDL_Point pin = componentPins[ci][pi];
+        for (size_t ci = 0; ci < componentPinPositions.size(); ++ci) {
+            for (size_t pi = 0; pi < componentPinPositions[ci].size(); ++pi) {
+                SDL_Point pin = componentPinPositions[ci][pi];
                 for (size_t wi = 0; wi < wires.size(); ++wi) {
-                    if (wireNodes[wi] < 0) continue;
+                    if (wireNodeList[wi] < 0) continue;
                     for (size_t si = 0; si + 1 < wires[wi].size(); ++si) {
                         if (pointToSegmentDist(pin.x, pin.y,
                             wires[wi][si].x, wires[wi][si].y,
                             wires[wi][si + 1].x, wires[wi][si + 1].y) < 0.75f) {
-                            dsu.unite(componentPinNodes[ci][pi], wireNodes[wi]);
+                            nodeUnion.joinNodes(componentPinLinks[ci][pi], wireNodeList[wi]);
                             break;
                         }
                     }
@@ -2663,14 +2664,14 @@ private:
             }
         }
         for (const SDL_Point& junction : junctions) {
-            int junctionNode = nodeFor(junction);
+            int junctionNode = nodeAt(junction);
             for (size_t wi = 0; wi < wires.size(); ++wi) {
-                if (wireNodes[wi] < 0) continue;
+                if (wireNodeList[wi] < 0) continue;
                 for (size_t si = 0; si + 1 < wires[wi].size(); ++si) {
                     if (pointToSegmentDist(junction.x, junction.y,
                         wires[wi][si].x, wires[wi][si].y,
                         wires[wi][si + 1].x, wires[wi][si + 1].y) < 0.75f) {
-                        dsu.unite(junctionNode, wireNodes[wi]);
+                        nodeUnion.joinNodes(junctionNode, wireNodeList[wi]);
                         break;
                     }
                 }
@@ -2679,17 +2680,17 @@ private:
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            const vector<int>& pins = componentPinNodes[ci];
+            const vector<int>& pins = componentPinLinks[ci];
             if (pins.size() >= 2) {
-                bool closed = comp.name == "Switch" && comp.switchState;
-                auto runtimeIt = componentRuntime.find(comp.id);
-                bool pressed = comp.name == "Push Button" && runtimeIt != componentRuntime.end() && runtimeIt->second.pressed;
-                if (closed || pressed) dsu.unite(pins[0], pins[1]);
+                bool closed = comp.name == "Switch" && comp.switchClosed;
+                auto runtimeIt = runtimeData.find(comp.id);
+                bool isPressed = comp.name == "Push Button" && runtimeIt != runtimeData.end() && runtimeIt->second.isPressed;
+                if (closed || isPressed) nodeUnion.joinNodes(pins[0], pins[1]);
             }
             if (comp.name == "Keypad 4x4" && pins.size() >= 8) {
-                MatrixKeypad4x4& keypad = keypadModels[comp.id];
-                if (keypad.pressed()) {
-                    dsu.unite(pins[(size_t)keypad.pressedRow()], pins[4U + (size_t)keypad.pressedColumn()]);
+                MatrixKeypad4x4& keypad = keypadData[comp.id];
+                if (keypad.hasPressedKey()) {
+                    nodeUnion.joinNodes(pins[(size_t)keypad.pressedRowIndex()], pins[4U + (size_t)keypad.pressedColumnIndex()]);
                 }
             }
         }
@@ -2700,76 +2701,77 @@ private:
             double voltage = std::numeric_limits<double>::quiet_NaN();
         };
         unordered_map<int, NetValue> nets;
-        set<string> warnings;
+        set<string> warningSet;
 
-        auto drive = [&](int node, double voltage, const string& sourceName) {
-            int root = dsu.find(node);
-            NetValue& net = nets[root];
+        auto driveNode = [&](int node, double voltage, const string& sourceName) {
+            int root = nodeUnion.find(node);
+            NetValue& netNumber = nets[root];
             if (std::isnan(voltage)) {
-                net.driven = true;
-                net.undefined = true;
-                net.voltage = std::numeric_limits<double>::quiet_NaN();
+                netNumber.driven = true;
+                netNumber.undefined = true;
+                netNumber.voltage = std::numeric_limits<double>::quiet_NaN();
                 return;
             }
-            if (!net.driven) {
-                net.driven = true;
-                net.voltage = voltage;
+            if (!netNumber.driven) {
+                netNumber.driven = true;
+                netNumber.voltage = voltage;
                 return;
             }
-            if (!net.undefined && std::fabs(net.voltage - voltage) > 0.4) {
-                net.undefined = true;
-                net.voltage = std::numeric_limits<double>::quiet_NaN();
-                addSimulationWarning(warnings, "Conflicting voltage sources detected near " + sourceName + ".");
+            if (!netNumber.undefined && std::fabs(netNumber.voltage - voltage) > 0.4) {
+                netNumber.undefined = true;
+                netNumber.voltage = std::numeric_limits<double>::quiet_NaN();
+                addSimulationWarningText(warningSet, "Conflicting voltage sources detected near " + sourceName + ".");
             }
         };
 
-        auto readVoltage = [&](int node) -> double {
-            int root = dsu.find(node);
+        auto nodeVoltage = [&](int node) -> double {
+            int root = nodeUnion.find(node);
             auto it = nets.find(root);
             if (it == nets.end() || !it->second.driven || it->second.undefined)
                 return std::numeric_limits<double>::quiet_NaN();
             return it->second.voltage;
         };
 
-        auto readDigitalByte = [&](const vector<int>& pins, size_t start, bool& defined) -> uint8_t {
+        auto readPinByte = [&](const vector<int>& pins, size_t start, bool& defined) -> uint8_t {
             uint8_t result = 0;
             defined = true;
-            for (size_t bit = 0; bit < 8; ++bit) {
-                if (start + bit >= pins.size()) { defined = false; break; }
-                LogicLevel level = LogicStandard::fromVoltage(readVoltage(pins[start + bit]));
+            for (size_t bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) {
+                if (start + bitIndexValue >= pins.size()) { defined = false; break; }
+                LogicLevel level = LogicStandard::logicFromVoltage(nodeVoltage(pins[start + bitIndexValue]));
                 if (level == LogicLevel::UNDEFINED) defined = false;
-                else if (level == LogicLevel::HIGH) result = (uint8_t)(result | (1U << bit));
+                else if (level == LogicLevel::HIGH) result = (uint8_t)(result | (1U << bitIndexValue));
             }
             return result;
         };
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             if (pins.empty()) continue;
-            string displayName = comp.label.empty() ? comp.name : comp.label;
-            if (comp.name == "Ground") drive(pins[0], 0.0, displayName);
-            else if (comp.name == "VCC") drive(pins[0], 5.0, displayName);
+            string componentDisplayName = comp.label.empty() ? comp.name : comp.label;
+            if (comp.name == "Ground") driveNode(pins[0], 0.0, componentDisplayName);
+            else if (comp.name == "VCC") driveNode(pins[0], 5.0, componentDisplayName);
             else if (comp.name == "DC Voltage Source" || comp.name == "Battery") {
-                double sourceVoltage = parseFirstNumber(comp.value, comp.name == "Battery" ? 9.0 : 5.0);
-                drive(pins[0], sourceVoltage, displayName);
-                if (pins.size() > 1) drive(pins[1], 0.0, displayName);
+                double sourceVoltage = firstNumber(comp.value, comp.name == "Battery" ? 9.0 : 5.0);
+                driveNode(pins[0], sourceVoltage, componentDisplayName);
+                if (pins.size() > 1) driveNode(pins[1], 0.0, componentDisplayName);
             } else if (comp.name == "Clock Generator") {
-                double frequency = std::max(0.01, parseFirstNumber(comp.value, 1.0));
-                double phase = std::fmod((now / 1000.0) * frequency, 1.0);
-                drive(pins[0], phase < 0.5 ? 0.0 : 5.0, displayName);
+                double cpuFrequency = std::max(0.01, firstNumber(comp.value, 1.0));
+                double phase = std::fmod((now / 1000.0) * cpuFrequency, 1.0);
+                driveNode(pins[0], phase < 0.5 ? 0.0 : 5.0, componentDisplayName);
             } else if (comp.name == "Microcontroller" && pins.size() >= 16) {
-                Microcontroller& mcu = microcontrollerModels[comp.id];
-                for (int bit = 0; bit < 8; ++bit) {
-                    if (mcu.portA().isOutput((unsigned)bit))
-                        drive(pins[(size_t)bit], mcu.portA().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port A");
-                    if (mcu.portB().isOutput((unsigned)bit))
-                        drive(pins[8U + (size_t)bit], mcu.portB().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port B");
+
+                Microcontroller& mcu = microcontrollerData[comp.id];
+                for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) {
+                    if (mcu.portAView().isOutputPin((unsigned)bitIndexValue))
+                        driveNode(pins[(size_t)bitIndexValue], mcu.portAView().getOutputBit((unsigned)bitIndexValue) ? 5.0 : 0.0, "Port A");
+                    if (mcu.portBView().isOutputPin((unsigned)bitIndexValue))
+                        driveNode(pins[8U + (size_t)bitIndexValue], mcu.portBView().getOutputBit((unsigned)bitIndexValue) ? 5.0 : 0.0, "Port B");
                 }
             } else if (comp.name == "AND Gate" || comp.name == "OR Gate" ||
                        comp.name == "NOT Gate" || comp.name == "NAND Gate" ||
                        comp.name == "XOR Gate" || comp.name == "D Flip-Flop") {
-                drive(pins.back(), componentRuntime[comp.id].outputVoltage, displayName);
+                driveNode(pins.back(), runtimeData[comp.id].outputVoltageValue, componentDisplayName);
             }
         }
 
@@ -2778,12 +2780,12 @@ private:
             for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
                 const placedComp& comp = placedComponents[ci];
                 if (comp.name != "Resistor" && comp.name != "Inductor") continue;
-                const vector<int>& pins = componentPinNodes[ci];
+                const vector<int>& pins = componentPinLinks[ci];
                 if (pins.size() < 2) continue;
-                double a = readVoltage(pins[0]);
-                double b = readVoltage(pins[1]);
-                if (!std::isnan(a) && std::isnan(b)) { drive(pins[1], a, comp.name); changed = true; }
-                if (std::isnan(a) && !std::isnan(b)) { drive(pins[0], b, comp.name); changed = true; }
+                double a = nodeVoltage(pins[0]);
+                double b = nodeVoltage(pins[1]);
+                if (!std::isnan(a) && std::isnan(b)) { driveNode(pins[1], a, comp.name); changed = true; }
+                if (std::isnan(a) && !std::isnan(b)) { driveNode(pins[0], b, comp.name); changed = true; }
             }
             return changed;
         };
@@ -2791,124 +2793,124 @@ private:
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
-            if (comp.name != "ADC" || pins.size() < (size_t)(3 + comp.inputCount)) continue;
-            double vin = readVoltage(pins[0]);
-            double vrefPlus = readVoltage(pins[1]);
-            double vrefMinus = readVoltage(pins[2]);
-            if (std::isnan(vin) || std::isnan(vrefPlus) || std::isnan(vrefMinus)) {
-                addSimulationWarning(warnings, "ADC reference or analog input is floating. [" +
+            vector<int>& pins = componentPinLinks[ci];
+            if (comp.name != "ADC" || pins.size() < (size_t)(3 + comp.inputCountValue)) continue;
+            double vin = nodeVoltage(pins[0]);
+            double referencePlus = nodeVoltage(pins[1]);
+            double referenceMinus = nodeVoltage(pins[2]);
+            if (std::isnan(vin) || std::isnan(referencePlus) || std::isnan(referenceMinus)) {
+                addSimulationWarningText(warningSet, "ADC reference or analog input is floating. [" +
                     (comp.label.empty() ? comp.name : comp.label) + "]");
             }
-            ADCModel& adc = adcModels[comp.id];
-            adc.configure(comp.inputCount, comp.propagationDelayMs);
-            adc.update(vin, vrefPlus, vrefMinus, now);
-            for (int bit = 0; bit < comp.inputCount; ++bit)
-                drive(pins[3U + (size_t)bit], adc.bit(bit) ? 5.0 : 0.0, comp.name);
+            ADCModel& adc = adcData[comp.id];
+            adc.setupModel(comp.inputCountValue, comp.propagationDelay);
+            adc.updateModel(vin, referencePlus, referenceMinus, now);
+            for (int bitIndexValue = 0; bitIndexValue < comp.inputCountValue; ++bitIndexValue)
+                driveNode(pins[3U + (size_t)bitIndexValue], adc.readBit(bitIndexValue) ? 5.0 : 0.0, comp.name);
         }
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             if (comp.name != "Microcontroller" || pins.size() < 16) continue;
-            Microcontroller& mcu = microcontrollerModels[comp.id];
-            mcu.setClockHz(std::max(0.1, parseNamedNumber(comp.value, "clock", 100.0)));
-            string firmware = parseNamedString(comp.value, "firmware", "");
-            if (!firmware.empty() && attemptedFirmwarePaths[comp.id] != firmware) {
-                attemptedFirmwarePaths[comp.id] = firmware;
-                string error;
-                if (mcu.loadFirmwareFile(firmware, error)) {
-                    simulationLog.push_back("Firmware loaded: " + firmware);
-                    if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+            Microcontroller& mcu = microcontrollerData[comp.id];
+            mcu.setCpuClock(std::max(0.1, namedNumber(comp.value, "clock", 100.0)));
+            string firmware = namedText(comp.value, "firmware", "");
+            if (!firmware.empty() && checkedFirmwarePaths[comp.id] != firmware) {
+                checkedFirmwarePaths[comp.id] = firmware;
+                string errorMessage;
+                if (mcu.loadFirmware(firmware, errorMessage)) {
+                    simulationLogLines.push_back("Firmware loaded: " + firmware);
+                    if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
                 } else {
-                    addSimulationWarning(warnings, "Firmware error: " + error);
+                    addSimulationWarningText(warningSet, "Firmware error: " + errorMessage);
                 }
             }
 
             uint8_t inputA = 0;
             uint8_t inputB = 0;
-            for (int bit = 0; bit < 8; ++bit) {
-                if (LogicStandard::fromVoltage(readVoltage(pins[(size_t)bit])) == LogicLevel::HIGH)
-                    inputA = (uint8_t)(inputA | (1U << bit));
-                if (LogicStandard::fromVoltage(readVoltage(pins[8U + (size_t)bit])) == LogicLevel::HIGH)
-                    inputB = (uint8_t)(inputB | (1U << bit));
+            for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) {
+                if (LogicStandard::logicFromVoltage(nodeVoltage(pins[(size_t)bitIndexValue])) == LogicLevel::HIGH)
+                    inputA = (uint8_t)(inputA | (1U << bitIndexValue));
+                if (LogicStandard::logicFromVoltage(nodeVoltage(pins[8U + (size_t)bitIndexValue])) == LogicLevel::HIGH)
+                    inputB = (uint8_t)(inputB | (1U << bitIndexValue));
             }
-            mcu.samplePortInputs(inputA, inputB);
-            mcu.tick(now);
-            if (!mcu.lastError().empty()) addSimulationWarning(warnings, "MCU: " + mcu.lastError());
-            for (int bit = 0; bit < 8; ++bit) {
-                if (mcu.portA().isOutput((unsigned)bit))
-                    drive(pins[(size_t)bit], mcu.portA().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port A");
-                if (mcu.portB().isOutput((unsigned)bit))
-                    drive(pins[8U + (size_t)bit], mcu.portB().outputBit((unsigned)bit) ? 5.0 : 0.0, "Port B");
+            mcu.sampleIoPorts(inputA, inputB);
+            mcu.runCpuTick(now);
+            if (!mcu.cpuErrorText().empty()) addSimulationWarningText(warningSet, "MCU: " + mcu.cpuErrorText());
+            for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue) {
+                if (mcu.portAView().isOutputPin((unsigned)bitIndexValue))
+                    driveNode(pins[(size_t)bitIndexValue], mcu.portAView().getOutputBit((unsigned)bitIndexValue) ? 5.0 : 0.0, "Port A");
+                if (mcu.portBView().isOutputPin((unsigned)bitIndexValue))
+                    driveNode(pins[8U + (size_t)bitIndexValue], mcu.portBView().getOutputBit((unsigned)bitIndexValue) ? 5.0 : 0.0, "Port B");
             }
         }
         for (int pass = 0; pass < 6; ++pass) if (!propagatePassive()) break;
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
-            if (comp.name != "DAC" || pins.size() < (size_t)(comp.inputCount + 3)) continue;
+            vector<int>& pins = componentPinLinks[ci];
+            if (comp.name != "DAC" || pins.size() < (size_t)(comp.inputCountValue + 3)) continue;
             uint32_t code = 0;
             bool defined = true;
-            for (int bit = 0; bit < comp.inputCount; ++bit) {
-                LogicLevel level = LogicStandard::fromVoltage(readVoltage(pins[(size_t)bit]));
+            for (int bitIndexValue = 0; bitIndexValue < comp.inputCountValue; ++bitIndexValue) {
+                LogicLevel level = LogicStandard::logicFromVoltage(nodeVoltage(pins[(size_t)bitIndexValue]));
                 if (level == LogicLevel::UNDEFINED) defined = false;
-                else if (level == LogicLevel::HIGH) code |= (1U << bit);
+                else if (level == LogicLevel::HIGH) code |= (1U << bitIndexValue);
             }
-            double vrefPlus = readVoltage(pins[(size_t)comp.inputCount]);
-            double vrefMinus = readVoltage(pins[(size_t)comp.inputCount + 1U]);
-            if (!defined || std::isnan(vrefPlus) || std::isnan(vrefMinus)) {
-                addSimulationWarning(warnings, "DAC digital input or reference is floating. [" +
+            double referencePlus = nodeVoltage(pins[(size_t)comp.inputCountValue]);
+            double referenceMinus = nodeVoltage(pins[(size_t)comp.inputCountValue + 1U]);
+            if (!defined || std::isnan(referencePlus) || std::isnan(referenceMinus)) {
+                addSimulationWarningText(warningSet, "DAC digital input or reference is floating. [" +
                     (comp.label.empty() ? comp.name : comp.label) + "]");
             }
-            DACModel& dac = dacModels[comp.id];
-            dac.configure(comp.inputCount, comp.propagationDelayMs);
-            if (defined) dac.update(code, vrefPlus, vrefMinus, now);
-            drive(pins[(size_t)comp.inputCount + 2U], dac.voltage(), comp.name);
+            DACModel& dac = dacData[comp.id];
+            dac.setupModel(comp.inputCountValue, comp.propagationDelay);
+            if (defined) dac.updateModel(code, referencePlus, referenceMinus, now);
+            driveNode(pins[(size_t)comp.inputCountValue + 2U], dac.getVoltage(), comp.name);
         }
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             if (comp.name != "External Memory" || pins.size() < 18) continue;
-            bool addressDefined = false;
-            bool dataDefined = false;
-            uint8_t address = readDigitalByte(pins, 0, addressDefined);
-            uint8_t data = readDigitalByte(pins, 8, dataDefined);
-            LogicLevel rdLevel = LogicStandard::fromVoltage(readVoltage(pins[16]));
-            LogicLevel wrLevel = LogicStandard::fromVoltage(readVoltage(pins[17]));
+            bool addressIsDefined = false;
+            bool dataIsDefined = false;
+            uint8_t memoryAddress = readPinByte(pins, 0, addressIsDefined);
+            uint8_t data = readPinByte(pins, 8, dataIsDefined);
+            LogicLevel rdLevel = LogicStandard::logicFromVoltage(nodeVoltage(pins[16]));
+            LogicLevel wrLevel = LogicStandard::logicFromVoltage(nodeVoltage(pins[17]));
             bool rd = rdLevel == LogicLevel::HIGH;
             bool wr = wrLevel == LogicLevel::HIGH;
-            if (rd && wr) addSimulationWarning(warnings, "External Memory RD and WR are active together.");
-            ExternalMemory& memory = externalMemoryModels[comp.id];
-            bool previousWrite = externalMemoryPreviousWrite[comp.id];
-            if (wr && !previousWrite && addressDefined && dataDefined) memory.write(address, data);
-            externalMemoryPreviousWrite[comp.id] = wr;
-            if (rd && addressDefined) {
-                uint8_t value = memory.read(address);
-                for (int bit = 0; bit < 8; ++bit)
-                    drive(pins[8U + (size_t)bit], ((value >> bit) & 1U) ? 5.0 : 0.0, "External Memory");
+            if (rd && wr) addSimulationWarningText(warningSet, "External Memory RD and WR are active together.");
+            ExternalMemory& memoryData = externalMemoryData[comp.id];
+            bool previousWriteState = memoryWriteState[comp.id];
+            if (wr && !previousWriteState && addressIsDefined && dataIsDefined) memoryData.writeData(memoryAddress, data);
+            memoryWriteState[comp.id] = wr;
+            if (rd && addressIsDefined) {
+                uint8_t value = memoryData.readData(memoryAddress);
+                for (int bitIndexValue = 0; bitIndexValue < 8; ++bitIndexValue)
+                    driveNode(pins[8U + (size_t)bitIndexValue], ((value >> bitIndexValue) & 1U) ? 5.0 : 0.0, "External Memory");
             }
         }
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             if (comp.name != "LCD 16x2" || pins.size() < 11) continue;
-            bool dataDefined = false;
-            uint8_t data = readDigitalByte(pins, 0, dataDefined);
-            LogicLevel rs = LogicStandard::fromVoltage(readVoltage(pins[8]));
-            LogicLevel rw = LogicStandard::fromVoltage(readVoltage(pins[9]));
-            LogicLevel enable = LogicStandard::fromVoltage(readVoltage(pins[10]));
-            if (dataDefined && rs != LogicLevel::UNDEFINED && rw != LogicLevel::UNDEFINED && enable != LogicLevel::UNDEFINED) {
-                lcdModels[comp.id].sampleBus(data, rs == LogicLevel::HIGH, rw == LogicLevel::HIGH, enable == LogicLevel::HIGH);
+            bool dataIsDefined = false;
+            uint8_t data = readPinByte(pins, 0, dataIsDefined);
+            LogicLevel lcdRs = LogicStandard::logicFromVoltage(nodeVoltage(pins[8]));
+            LogicLevel lcdRw = LogicStandard::logicFromVoltage(nodeVoltage(pins[9]));
+            LogicLevel lcdEnable = LogicStandard::logicFromVoltage(nodeVoltage(pins[10]));
+            if (dataIsDefined && lcdRs != LogicLevel::UNDEFINED && lcdRw != LogicLevel::UNDEFINED && lcdEnable != LogicLevel::UNDEFINED) {
+                lcdData[comp.id].sampleLcdBus(data, lcdRs == LogicLevel::HIGH, lcdRw == LogicLevel::HIGH, lcdEnable == LogicLevel::HIGH);
             }
         }
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             bool isGate = comp.name == "AND Gate" || comp.name == "OR Gate" ||
                           comp.name == "NOT Gate" || comp.name == "NAND Gate" ||
                           comp.name == "XOR Gate";
@@ -2916,7 +2918,7 @@ private:
                 vector<LogicLevel> inputs;
                 bool undefined = false;
                 for (size_t pi = 0; pi + 1 < pins.size(); ++pi) {
-                    LogicLevel level = LogicStandard::fromVoltage(readVoltage(pins[pi]));
+                    LogicLevel level = LogicStandard::logicFromVoltage(nodeVoltage(pins[pi]));
                     inputs.push_back(level);
                     if (level == LogicLevel::UNDEFINED) undefined = true;
                 }
@@ -2938,36 +2940,36 @@ private:
                         output = (highCount % 2) ? LogicLevel::HIGH : LogicLevel::LOW;
                     }
                 } else {
-                    addSimulationWarning(warnings, "Floating input detected. [" +
+                    addSimulationWarningText(warningSet, "Floating input detected. [" +
                         (comp.label.empty() ? comp.name : comp.label) + "]");
                 }
-                scheduleOutput(comp, LogicStandard::toVoltage(output), now);
+                scheduleGateOutput(comp, LogicStandard::voltageFromLogic(output), now);
             }
 
             if (comp.name == "D Flip-Flop" && pins.size() >= 3) {
-                ComponentRuntime& runtime = componentRuntime[comp.id];
-                LogicLevel d = LogicStandard::fromVoltage(readVoltage(pins[0]));
-                LogicLevel clock = LogicStandard::fromVoltage(readVoltage(pins[1]));
+                ComponentRuntime& runtimeState = runtimeData[comp.id];
+                LogicLevel d = LogicStandard::logicFromVoltage(nodeVoltage(pins[0]));
+                LogicLevel clock = LogicStandard::logicFromVoltage(nodeVoltage(pins[1]));
                 if (d == LogicLevel::UNDEFINED || clock == LogicLevel::UNDEFINED) {
-                    addSimulationWarning(warnings, "Floating input detected. [" +
+                    addSimulationWarningText(warningSet, "Floating input detected. [" +
                         (comp.label.empty() ? comp.name : comp.label) + "]");
-                    if (clock == LogicLevel::HIGH && runtime.previousClock == LogicLevel::LOW)
-                        scheduleOutput(comp, std::numeric_limits<double>::quiet_NaN(), now);
-                } else if (runtime.previousClock == LogicLevel::LOW && clock == LogicLevel::HIGH) {
-                    scheduleOutput(comp, LogicStandard::toVoltage(d), now);
+                    if (clock == LogicLevel::HIGH && runtimeState.previousClockLevel == LogicLevel::LOW)
+                        scheduleGateOutput(comp, std::numeric_limits<double>::quiet_NaN(), now);
+                } else if (runtimeState.previousClockLevel == LogicLevel::LOW && clock == LogicLevel::HIGH) {
+                    scheduleGateOutput(comp, LogicStandard::voltageFromLogic(d), now);
                 }
-                if (clock != LogicLevel::UNDEFINED) runtime.previousClock = clock;
+                if (clock != LogicLevel::UNDEFINED) runtimeState.previousClockLevel = clock;
             }
         }
 
-        applyPendingOutputs(now);
+        applyScheduledOutputs(now);
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            vector<int>& pins = componentPinNodes[ci];
+            vector<int>& pins = componentPinLinks[ci];
             if (pins.empty()) continue;
             if (comp.name == "AND Gate" || comp.name == "OR Gate" || comp.name == "NOT Gate" ||
                 comp.name == "NAND Gate" || comp.name == "XOR Gate" || comp.name == "D Flip-Flop") {
-                drive(pins.back(), componentRuntime[comp.id].outputVoltage,
+                driveNode(pins.back(), runtimeData[comp.id].outputVoltageValue,
                       comp.label.empty() ? comp.name : comp.label);
             }
         }
@@ -2975,38 +2977,38 @@ private:
 
         for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
             placedComp& comp = placedComponents[ci];
-            ComponentRuntime& runtime = componentRuntime[comp.id];
-            runtime.pinVoltages.clear();
-            for (int pin : componentPinNodes[ci]) runtime.pinVoltages.push_back(readVoltage(pin));
-            if (comp.name == "LED" && runtime.pinVoltages.size() >= 2) {
-                double threshold = parseNamedNumber(comp.value, "threshold", 1.8);
-                double forwardVoltage = runtime.pinVoltages[0] - runtime.pinVoltages[1];
-                runtime.ledOn = !std::isnan(forwardVoltage) && forwardVoltage >= threshold;
+            ComponentRuntime& runtimeState = runtimeData[comp.id];
+            runtimeState.pinVoltageValues.clear();
+            for (int pin : componentPinLinks[ci]) runtimeState.pinVoltageValues.push_back(nodeVoltage(pin));
+            if (comp.name == "LED" && runtimeState.pinVoltageValues.size() >= 2) {
+                double threshold = namedNumber(comp.value, "threshold", 1.8);
+                double forwardVoltage = runtimeState.pinVoltageValues[0] - runtimeState.pinVoltageValues[1];
+                runtimeState.ledState = !std::isnan(forwardVoltage) && forwardVoltage >= threshold;
             }
             if (comp.name == "7-Segment") {
-                runtime.segments.assign(8, false);
-                for (size_t i = 0; i < runtime.pinVoltages.size() && i < 8; ++i)
-                    runtime.segments[i] = LogicStandard::fromVoltage(runtime.pinVoltages[i]) == LogicLevel::HIGH;
+                runtimeState.segmentStateList.assign(8, false);
+                for (size_t i = 0; i < runtimeState.pinVoltageValues.size() && i < 8; ++i)
+                    runtimeState.segmentStateList[i] = LogicStandard::logicFromVoltage(runtimeState.pinVoltageValues[i]) == LogicLevel::HIGH;
             }
         }
 
-        wireVoltages.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
+        wireVoltageValues.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
         for (size_t wi = 0; wi < wires.size(); ++wi)
-            if (wireNodes[wi] >= 0) wireVoltages[wi] = readVoltage(wireNodes[wi]);
+            if (wireNodeList[wi] >= 0) wireVoltageValues[wi] = nodeVoltage(wireNodeList[wi]);
 
-        for (const string& warning : warnings) {
-            if (lastSimulationWarnings.find(warning) == lastSimulationWarnings.end()) {
-                cerr << warning << endl;
-                simulationLog.push_back(warning);
-                if (simulationLog.size() > 20) simulationLog.erase(simulationLog.begin());
+        for (const string& warningLine : warningSet) {
+            if (lastWarningSet.find(warningLine) == lastWarningSet.end()) {
+                cerr << warningLine << endl;
+                simulationLogLines.push_back(warningLine);
+                if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
             }
         }
-        lastSimulationWarnings = warnings;
+        lastWarningSet = warningSet;
     }
 
     vector<SDL_Point> gCompPinPos(const placedComp& comp) const {
         vector<SDL_Point> pins;
-        vector<LocalPin> localPins = ComponentLibrary::get(comp.name).localPins(comp.inputCount);
+        vector<LocalPin> localPinList = ComponentLibrary::getComponentInfo(comp.name).getPinLayout(comp.inputCountValue);
         auto transform = [&](int lx, int ly) -> SDL_Point {
             int horizontal = comp.flipH ? -1 : 1;
             int vertical = comp.flipV ? -1 : 1;
@@ -3019,7 +3021,7 @@ private:
             int fy = (int)std::lround(rx * sine + ry * cosine);
             return {comp.x + fx, comp.y + fy};
         };
-        for (const LocalPin& pin : localPins) pins.push_back(transform(pin.x, pin.y));
+        for (const LocalPin& pin : localPinList) pins.push_back(transform(pin.x, pin.y));
         return pins;
     }
 
@@ -3030,126 +3032,126 @@ private:
             int fx = lx * sx;
             int fy = -ly *sy;
             float rad = comp.angle * 3.14159f / 180.0f;
-            float s = sin(rad), c = cos(rad);
+            float s = sin(rad),c = cos(rad);
             int rx = (int)(fx * c - fy * s);
             int ry = (int)(fx * s + fy * c);
             int wx = comp.x + rx;
             int wy = comp.y + ry;
             return {wldToScrX(wx), wldToScrY(wy)};
-        };
+        } ;
 
-        auto drawLocalBox = [&](int halfWidth, int halfHeight, SDL_Color color) {
+        auto drawLocalBox = [&](int componentHalfWidth, int componentHalfHeight, SDL_Color color) {
             SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
             SDL_Point points[5] = {
-                toScreen(-halfWidth, -halfHeight), toScreen(halfWidth, -halfHeight),
-                toScreen(halfWidth, halfHeight), toScreen(-halfWidth, halfHeight),
-                toScreen(-halfWidth, -halfHeight)
+                toScreen(-componentHalfWidth, -componentHalfHeight), toScreen(componentHalfWidth, -componentHalfHeight),
+                toScreen(componentHalfWidth, componentHalfHeight), toScreen(-componentHalfWidth, componentHalfHeight),
+                toScreen(-componentHalfWidth, -componentHalfHeight)
             };
             SDL_RenderDrawLines(renderer, points, 5);
         };
 
         if (comp.name == "ADC") {
-            drawLocalBox(42, 34, {20, 70, 120, 255});
+            drawLocalBox(42, 34, {20,70,120,255});
             SDL_Point center = toScreen(0, 0);
-            drawTxt("ADC", center.x - 16, center.y - 12, {20, 70, 120, 255}, libFont);
-            auto model = adcModels.find(comp.id);
-            string code = model == adcModels.end() ? "0" : to_string(model->second.code());
-            drawTxt(to_string(comp.inputCount) + " bit  code=" + code,
-                    center.x - 42, center.y + 5, {40, 40, 40, 255}, libFont);
-            drawTxt("Vin", toScreen(-40, -22).x, toScreen(-40, -22).y-6, {0, 0, 0, 255}, libFont);
-            drawTxt("V+", toScreen(-40, 0).x, toScreen(-40, 0).y-6, {0, 0, 0, 255}, libFont);
-            drawTxt("V-", toScreen(-40, 22).x, toScreen(-40, 22).y-6, {0, 0, 0, 255}, libFont);
+            drawTxt("ADC", center.x - 16, center.y - 12, {20,70,120,255}, libFont);
+            auto model = adcData.find(comp.id);
+            string code = model == adcData.end() ? "0" : to_string(model->second.getCodeValue());
+            drawTxt(to_string(comp.inputCountValue) + " bit  code=" + code,
+                    center.x - 42, center.y + 5, {40,40,40,255}, libFont);
+            drawTxt("Vin", toScreen(-40,-22).x, toScreen(-40,-22).y-6, {0,0,0,255}, libFont);
+            drawTxt("V+", toScreen(-40,0).x, toScreen(-40,0).y-6, {0,0,0,255}, libFont);
+            drawTxt("V-", toScreen(-40,22).x, toScreen(-40,22).y-6, {0,0,0,255}, libFont);
         }
         else if (comp.name == "DAC") {
-            drawLocalBox(42, 34, {90, 40, 130, 255});
+            drawLocalBox(42, 34, {90,40,130,255});
             SDL_Point center = toScreen(0, 0);
-            drawTxt("DAC", center.x - 16, center.y - 12, {90, 40, 130, 255}, libFont);
-            auto model = dacModels.find(comp.id);
-            double voltage = model == dacModels.end() ? 0.0 : model->second.voltage();
+            drawTxt("DAC", center.x - 16, center.y - 12, {90,40,130,255}, libFont);
+            auto model = dacData.find(comp.id);
+            double voltage = model == dacData.end() ? 0.0 : model->second.getVoltage();
             stringstream valueText;
             valueText << fixed << setprecision(2) << voltage << "V";
-            drawTxt(to_string(comp.inputCount) + " bit  " + valueText.str(),
-                    center.x - 38, center.y + 5, {40, 40, 40, 255}, libFont);
+            drawTxt(to_string(comp.inputCountValue) + " bit  " + valueText.str(),
+                    center.x - 38, center.y + 5, {40,40,40,255}, libFont);
         }
         else if (comp.name == "Microcontroller") {
-            drawLocalBox(50, 34, {25, 80, 45, 255});
+            drawLocalBox(50, 34, {25,80,45,255});
             SDL_Point center = toScreen(0, 0);
-            drawTxt("MCU", center.x - 16, center.y - 24, {25, 80, 45, 255}, libFont);
-            auto model = microcontrollerModels.find(comp.id);
-            if (model != microcontrollerModels.end()) {
-                drawTxt("PC=" + to_string(model->second.pc().value()), center.x - 36, center.y - 5,
-                        {30, 30, 30, 255}, libFont);
-                drawTxt(model->second.halted() ? "HALT" : "RUN", center.x - 18, center.y + 11,
-                        model->second.halted() ? SDL_Color{180, 40, 40, 255} : SDL_Color{20, 130, 50, 255}, libFont);
+            drawTxt("MCU", center.x - 16, center.y - 24, {25,80,45,255}, libFont);
+            auto model = microcontrollerData.find(comp.id);
+            if (model != microcontrollerData.end()) {
+                drawTxt("PC=" + to_string(model->second.getProgramCounter().getCounterValue()), center.x - 36, center.y - 5,
+                        {30,30,30,255}, libFont);
+                drawTxt(model->second.cpuHalted() ? "HALT" : "RUN", center.x - 18, center.y + 11,
+                        model->second.cpuHalted() ? SDL_Color{180,40,40,255} : SDL_Color{20,130,50,255}, libFont);
             } else {
-                drawTxt("No firmware", center.x - 40, center.y, {150, 50, 40, 255}, libFont);
+                drawTxt("No firmware", center.x - 40, center.y, {150,50,40,255}, libFont);
             }
-            drawTxt("PA", toScreen(-46, 0).x, toScreen(-46, 0).y-6, {0, 0, 0, 255}, libFont);
-            drawTxt("PB", toScreen(34, 0).x, toScreen(34, 0).y-6, {0, 0, 0, 255}, libFont);
+            drawTxt("PA", toScreen(-46,0).x, toScreen(-46,0).y-6, {0,0,0,255}, libFont);
+            drawTxt("PB", toScreen(34,0).x, toScreen(34,0).y-6, {0,0,0,255}, libFont);
         }
         else if (comp.name == "External Memory") {
-            drawLocalBox(54, 38, {100, 65, 20, 255});
+            drawLocalBox(54, 38, {100,65,20,255});
             SDL_Point center = toScreen(0, 0);
-            drawTxt("EEPROM / RAM", center.x - 52, center.y - 16, {100, 65, 20, 255}, libFont);
-            auto memory = externalMemoryModels.find(comp.id);
-            string sizeText = memory == externalMemoryModels.end() ? "256 bytes" :
-                              to_string(memory->second.size()) + " bytes";
-            drawTxt(sizeText, center.x - 36, center.y + 3, {40, 40, 40, 255}, libFont);
-            drawTxt("A[7:0]", toScreen(-48, 0).x, toScreen(-48, 0).y-6, {0, 0, 0, 255}, libFont);
-            drawTxt("D[7:0]", toScreen(16, 0).x, toScreen(16, 0).y-6, {0, 0, 0, 255}, libFont);
+            drawTxt("EEPROM / RAM", center.x - 52, center.y - 16, {100,65,20,255}, libFont);
+            auto memoryData = externalMemoryData.find(comp.id);
+            string sizeText = memoryData == externalMemoryData.end() ? "256 bytes" :
+                              to_string(memoryData->second.getMemorySize()) + " bytes";
+            drawTxt(sizeText, center.x - 36, center.y + 3, {40,40,40,255}, libFont);
+            drawTxt("A[7:0]", toScreen(-48,0).x, toScreen(-48,0).y-6, {0,0,0,255}, libFont);
+            drawTxt("D[7:0]", toScreen(16,0).x, toScreen(16,0).y-6, {0,0,0,255}, libFont);
         }
         else if (comp.name == "LCD 16x2") {
-            drawLocalBox(58, 32, {20, 90, 65, 255});
+            drawLocalBox(58, 32, {20,90,65,255});
             SDL_Point topLeft = toScreen(-52, -24);
             SDL_Point center = toScreen(0, 0);
-            auto lcd = lcdModels.find(comp.id);
-            string first = lcd == lcdModels.end() ? string(16, ' ') : lcd->second.row(0);
-            string second = lcd == lcdModels.end() ? string(16, ' ') : lcd->second.row(1);
-            drawTxt(first, topLeft.x + 5, topLeft.y + 5, {15, 80, 35, 255}, libFont);
-            drawTxt(second, topLeft.x + 5, topLeft.y + 20, {15, 80, 35, 255}, libFont);
-            drawTxt("LCD 16x2", center.x - 35, center.y + 22, {20, 90, 65, 255}, libFont);
+            auto lcd = lcdData.find(comp.id);
+            string first = lcd == lcdData.end() ? string(16, ' ') : lcd->second.getRowText(0);
+            string second = lcd == lcdData.end() ? string(16, ' ') : lcd->second.getRowText(1);
+            drawTxt(first, topLeft.x + 5, topLeft.y + 5, {15,80,35,255}, libFont);
+            drawTxt(second, topLeft.x + 5, topLeft.y + 20, {15,80,35,255}, libFont);
+            drawTxt("LCD 16x2", center.x - 35, center.y + 22, {20,90,65,255}, libFont);
         }
         else if (comp.name == "Keypad 4x4") {
-            drawLocalBox(34, 34, {45, 45, 45, 255});
+            drawLocalBox(34, 34, {45,45,45,255});
             static const char labels[4][4] = {
                 {'1','2','3','A'}, {'4','5','6','B'}, {'7','8','9','C'}, {'*','0','#','D'}
             };
-            auto keypad = keypadModels.find(comp.id);
-            for (int row = 0; row < 4; ++row) {
+            auto keypad = keypadData.find(comp.id);
+            for (int rowIndexValue = 0; rowIndexValue < 4; ++rowIndexValue) {
                 for (int column = 0; column < 4; ++column) {
                     int x1 = -32 + column * 16;
-                    int y1 = -32 + row * 16;
+                    int y1 = -32 + rowIndexValue * 16;
                     SDL_Point p[5] = {
-                        toScreen(x1, y1), toScreen(x1+16, y1), toScreen(x1+16, y1+16),
-                        toScreen(x1, y1+16), toScreen(x1, y1)
+                        toScreen(x1,y1), toScreen(x1+16,y1), toScreen(x1+16,y1+16),
+                        toScreen(x1,y1+16), toScreen(x1,y1)
                     };
-                    SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+                    SDL_SetRenderDrawColor(renderer, 80,80,80,255);
                     SDL_RenderDrawLines(renderer, p, 5);
                     SDL_Point c = toScreen(x1+8, y1+8);
-                    if (keypad != keypadModels.end() && keypad->second.pressed() &&
-                        keypad->second.pressedRow() == row && keypad->second.pressedColumn() == column) {
-                        drawFilledCircle(c.x, c.y, 7, {180, 210, 240, 255});
+                    if (keypad != keypadData.end() && keypad->second.hasPressedKey() &&
+                        keypad->second.pressedRowIndex() == rowIndexValue && keypad->second.pressedColumnIndex() == column) {
+                        drawSolidCircle(c.x, c.y, 7, {180,210,240,255});
                     }
-                    drawTxt(string(1, labels[row][column]), c.x - 4, c.y - 7, {0, 0, 0, 255}, libFont);
+                    drawTxt(string(1, labels[rowIndexValue][column]), c.x - 4, c.y - 7, {0,0,0,255}, libFont);
                 }
             }
         }
         else if (comp.name == "Resistor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             int x = -32, y = 0;
-            for (int i = 0; i<4; i++) {
+            for (int i=0; i<4; i++){
                 auto p1 = toScreen(x, y);
                 auto p2 = toScreen(x+8, y-8);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-                x += 8; y -= 8;
+                x+=8; y-=8;
                 p1 = toScreen(x, y);
                 p2 = toScreen(x+8, y+8);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-                x += 8; y += 8;
+                x+=8; y+=8;
             }
         }
         else if (comp.name == "Capacitor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(-10, -15);
             auto p2 = toScreen(-10, 15);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3158,31 +3160,31 @@ private:
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
         }
         else if (comp.name == "Inductor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             int x = -27, y = 0;
-            for (int i = 0; i<5; i++) {
+            for (int i=0; i<5; i++) {
                 auto p1 = toScreen(x, y);
                 auto p2 = toScreen(x+5, y-7);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-                x += 5; y -= 7;
+                x+=5; y-=7;
                 p1 = toScreen(x, y);
                 p2 = toScreen(x+5, y+7);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
-                x += 5; y += 7;
+                x+=5; y+=7;
             }
         }
         else if (comp.name == "LED") {
-            const ComponentRuntime* runtime = findRuntime(comp.id);
+            const ComponentRuntime* runtimeState = runtimeFor(comp.id);
             SDL_Color ledColor = {150, 30, 30, 255};
-            string colorName = upperCopy(comp.value);
+            string colorName = upperText(comp.value);
             if (colorName.find("GREEN") != string::npos) ledColor = {30, 190, 60, 255};
             else if (colorName.find("BLUE") != string::npos) ledColor = {40, 100, 220, 255};
             else if (colorName.find("YELLOW") != string::npos) ledColor = {220, 190, 20, 255};
-            if (runtime && runtime->ledOn) {
+            if (runtimeState && runtimeState->ledState) {
                 SDL_Point center = toScreen(0, 0);
-                drawFilledCircle(center.x, center.y, 11, ledColor);
+                drawSolidCircle(center.x, center.y, 11, ledColor);
             }
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(-8, -10);
             auto p2 = toScreen(-8, 10);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3202,7 +3204,7 @@ private:
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
         }
         else if (comp.name == "Transistor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(0, -10);
             auto p2 = toScreen(0, 10);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3215,7 +3217,7 @@ private:
             SDL_RenderDrawRect(renderer, &circle);
         }
         else if (comp.name == "NPN" || comp.name == "PNP") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             int cx = wldToScrX(comp.x), cy = wldToScrY(comp.y);
             SDL_Rect circle = {cx-12, cy-12, 24, 24};
             SDL_RenderDrawRect(renderer, &circle);
@@ -3226,9 +3228,9 @@ private:
             SDL_RenderDrawLine(renderer, coll.x, coll.y, center.x, center.y);
             SDL_RenderDrawLine(renderer, emit.x, emit.y, center.x, center.y);
             SDL_RenderDrawLine(renderer, base.x, base.y, center.x, center.y);
-            vector<pair<int, int>> arrow;
-            if (comp.name == "NPN") arrow = {{0, 8}, {-3, 5}, {3, 5}};
-            else arrow = {{0, -8}, {-3, -5}, {3, -5}};
+            vector<pair<int,int>> arrow;
+            if(comp.name == "NPN") arrow = {{0,8}, {-3,5}, {3,5}};
+            else arrow = {{0,-8},{-3,-5},{3,-5}};
             auto tp = toScreen(arrow[0].first, arrow[0].second);
             auto ap1 = toScreen(arrow[1].first, arrow[1].second);
             auto ap2 = toScreen(arrow[2].first, arrow[2].second);
@@ -3237,7 +3239,7 @@ private:
             SDL_RenderDrawLine(renderer, ap2.x, ap2.y, tp.x, tp.y);
         }
         else if (comp.name == "Ground") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(0, -10);
             auto p2 = toScreen(0, 0);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3249,7 +3251,7 @@ private:
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
         }
         else if (comp.name == "VCC") {
-            SDL_SetRenderDrawColor(renderer, 180, 20, 20, 255);
+            SDL_SetRenderDrawColor(renderer, 180,20,20,255);
             auto p1 = toScreen(0, -12);
             auto p2 = toScreen(0, 8);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3259,54 +3261,54 @@ private:
             SDL_RenderDrawLine(renderer, p5.x, p5.y, p6.x, p6.y);
         }
         else if (comp.name == "DC Voltage Source") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto top = toScreen(0, -18); auto circleTop = toScreen(0, -12);
             auto bottom = toScreen(0, 18); auto circleBottom = toScreen(0, 12);
             SDL_RenderDrawLine(renderer, top.x, top.y, circleTop.x, circleTop.y);
             SDL_RenderDrawLine(renderer, circleBottom.x, circleBottom.y, bottom.x, bottom.y);
-            SDL_Point center = toScreen(0, 0);
+            SDL_Point center = toScreen(0,0);
             for (int angle = 0; angle < 360; angle += 15) {
                 double a1 = angle * 3.14159 / 180.0, a2 = (angle + 15) * 3.14159 / 180.0;
                 SDL_RenderDrawLine(renderer, center.x + (int)(12*cos(a1)), center.y + (int)(12*sin(a1)),
                                   center.x + (int)(12*cos(a2)), center.y + (int)(12*sin(a2)));
             }
-            auto h1 = toScreen(-4, -5), h2 = toScreen(4, -5), v1 = toScreen(0, -9), v2 = toScreen(0, -1);
-            SDL_RenderDrawLine(renderer, h1.x, h1.y, h2.x, h2.y); SDL_RenderDrawLine(renderer, v1.x, v1.y, v2.x, v2.y);
-            h1 = toScreen(-4, 6); h2 = toScreen(4, 6); SDL_RenderDrawLine(renderer, h1.x, h1.y, h2.x, h2.y);
+            auto h1=toScreen(-4,-5), h2=toScreen(4,-5), v1=toScreen(0,-9), v2=toScreen(0,-1);
+            SDL_RenderDrawLine(renderer,h1.x,h1.y,h2.x,h2.y); SDL_RenderDrawLine(renderer,v1.x,v1.y,v2.x,v2.y);
+            h1=toScreen(-4,6); h2=toScreen(4,6); SDL_RenderDrawLine(renderer,h1.x,h1.y,h2.x,h2.y);
         }
         else if (comp.name == "Clock Generator") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto a = toScreen(-22, 8), b = toScreen(-12, 8), c = toScreen(-12, -8), d = toScreen(0, -8);
-            auto e = toScreen(0, 8), f = toScreen(12, 8), g = toScreen(12, -8), h = toScreen(20, -8), o = toScreen(24, 0);
-            SDL_RenderDrawLine(renderer, a.x, a.y, b.x, b.y); SDL_RenderDrawLine(renderer, b.x, b.y, c.x, c.y);
-            SDL_RenderDrawLine(renderer, c.x, c.y, d.x, d.y); SDL_RenderDrawLine(renderer, d.x, d.y, e.x, e.y);
-            SDL_RenderDrawLine(renderer, e.x, e.y, f.x, f.y); SDL_RenderDrawLine(renderer, f.x, f.y, g.x, g.y);
-            SDL_RenderDrawLine(renderer, g.x, g.y, h.x, h.y); SDL_RenderDrawLine(renderer, h.x, h.y, o.x, o.y);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto a=toScreen(-22,8), b=toScreen(-12,8), c=toScreen(-12,-8), d=toScreen(0,-8);
+            auto e=toScreen(0,8), f=toScreen(12,8), g=toScreen(12,-8), h=toScreen(20,-8), o=toScreen(24,0);
+            SDL_RenderDrawLine(renderer,a.x,a.y,b.x,b.y); SDL_RenderDrawLine(renderer,b.x,b.y,c.x,c.y);
+            SDL_RenderDrawLine(renderer,c.x,c.y,d.x,d.y); SDL_RenderDrawLine(renderer,d.x,d.y,e.x,e.y);
+            SDL_RenderDrawLine(renderer,e.x,e.y,f.x,f.y); SDL_RenderDrawLine(renderer,f.x,f.y,g.x,g.y);
+            SDL_RenderDrawLine(renderer,g.x,g.y,h.x,h.y); SDL_RenderDrawLine(renderer,h.x,h.y,o.x,o.y);
         }
         else if (comp.name == "Switch") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto left = toScreen(-28, 0), leftContact = toScreen(-12, 0), rightContact = toScreen(12, 0), right = toScreen(28, 0);
-            SDL_RenderDrawLine(renderer, left.x, left.y, leftContact.x, leftContact.y);
-            SDL_RenderDrawLine(renderer, rightContact.x, rightContact.y, right.x, right.y);
-            auto armEnd = comp.switchState ? rightContact : toScreen(10, -12);
-            SDL_RenderDrawLine(renderer, leftContact.x, leftContact.y, armEnd.x, armEnd.y);
-            drawFilledCircle(leftContact.x, leftContact.y, 3, {0, 0, 0, 255});
-            drawFilledCircle(rightContact.x, rightContact.y, 3, {0, 0, 0, 255});
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto left=toScreen(-28,0), leftContact=toScreen(-12,0), rightContact=toScreen(12,0), right=toScreen(28,0);
+            SDL_RenderDrawLine(renderer,left.x,left.y,leftContact.x,leftContact.y);
+            SDL_RenderDrawLine(renderer,rightContact.x,rightContact.y,right.x,right.y);
+            auto armEnd = comp.switchClosed ? rightContact : toScreen(10,-12);
+            SDL_RenderDrawLine(renderer,leftContact.x,leftContact.y,armEnd.x,armEnd.y);
+            drawSolidCircle(leftContact.x,leftContact.y,3,{0,0,0,255});
+            drawSolidCircle(rightContact.x,rightContact.y,3,{0,0,0,255});
         }
         else if (comp.name == "Push Button") {
-            const ComponentRuntime* runtime = findRuntime(comp.id);
-            bool pressed = runtime && runtime->pressed;
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto left = toScreen(-28, 0), lc = toScreen(-12, 0), rc = toScreen(12, 0), right = toScreen(28, 0);
-            SDL_RenderDrawLine(renderer, left.x, left.y, lc.x, lc.y); SDL_RenderDrawLine(renderer, rc.x, rc.y, right.x, right.y);
-            auto bridge1 = toScreen(-10, pressed ? 0 : -9), bridge2 = toScreen(10, pressed ? 0 : -9);
-            SDL_RenderDrawLine(renderer, bridge1.x, bridge1.y, bridge2.x, bridge2.y);
-            auto stem1 = toScreen(0, -18), stem2 = toScreen(0, pressed ? -9 : -13);
-            SDL_RenderDrawLine(renderer, stem1.x, stem1.y, stem2.x, stem2.y);
-            drawFilledCircle(lc.x, lc.y, 3, {0, 0, 0, 255}); drawFilledCircle(rc.x, rc.y, 3, {0, 0, 0, 255});
+            const ComponentRuntime* runtimeState = runtimeFor(comp.id);
+            bool isPressed = runtimeState && runtimeState->isPressed;
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto left=toScreen(-28,0), lc=toScreen(-12,0), rc=toScreen(12,0), right=toScreen(28,0);
+            SDL_RenderDrawLine(renderer,left.x,left.y,lc.x,lc.y); SDL_RenderDrawLine(renderer,rc.x,rc.y,right.x,right.y);
+            auto bridge1=toScreen(-10, isPressed ? 0 : -9), bridge2=toScreen(10, isPressed ? 0 : -9);
+            SDL_RenderDrawLine(renderer,bridge1.x,bridge1.y,bridge2.x,bridge2.y);
+            auto stem1=toScreen(0,-18), stem2=toScreen(0,isPressed ? -9 : -13);
+            SDL_RenderDrawLine(renderer,stem1.x,stem1.y,stem2.x,stem2.y);
+            drawSolidCircle(lc.x,lc.y,3,{0,0,0,255}); drawSolidCircle(rc.x,rc.y,3,{0,0,0,255});
         }
         else if (comp.name == "Battery") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = toScreen(0, -12);
             auto p2 = toScreen(0, -4);
             SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
@@ -3318,61 +3320,61 @@ private:
             SDL_RenderDrawLine(renderer, p7.x, p7.y, p8.x, p8.y);
         }
         else if (comp.name == "AND Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector<pair<int, int>> points = {
-                {-20, -12}, {-20, 12}, {-20, -12}, {6, -12}, {-20, 12}, {6, 12}, {6, -12}, {10, -8},
-                {10, -8}, {12, -4}, {12, -4}, {12, 4}, {12, 4}, {10, 8}, {10, 8}, {6, 12},
-                {12, 0}, {18, 0}, {-26, -8}, {-20, -8}, {-26, 8}, {-20, 8}
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-20,-12}, {-20,12},{-20,-12}, {6,-12}, {-20,12}, {6,12}, {6,-12}, {10,-8},
+                {10,-8}, {12,-4},{12,-4}, {12,4},{12,4}, {10,8}, {10,8}, {6,12},
+                {12,0},{18,0}, {-26,-8}, {-20,-8},{-26,8}, {-20,8}
             };
-            for (size_t i = 0; i<points.size(); i += 2) {
+            for (size_t i=0; i<points.size(); i+=2) {
                 auto p1 = toScreen(points[i].first, points[i].second);
                 auto p2 = toScreen(points[i+1].first, points[i+1].second);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
             }
-            vector<LocalPin> local = ComponentLibrary::get(comp.name).localPins(comp.inputCount);
+            vector<LocalPin> local = ComponentLibrary::getComponentInfo(comp.name).getPinLayout(comp.inputCountValue);
             for (size_t i = 0; i + 1 < local.size(); ++i) {
                 auto outer = toScreen(local[i].x, local[i].y);
                 auto inner = toScreen(-20, local[i].y);
                 SDL_RenderDrawLine(renderer, outer.x, outer.y, inner.x, inner.y);
             }
-            auto outInner = toScreen(12, 0), outOuter = toScreen(local.back().x, 0);
-            SDL_RenderDrawLine(renderer, outInner.x, outInner.y, outOuter.x, outOuter.y);
+            auto outInner = toScreen(12,0), outOuter = toScreen(local.back().x,0);
+            SDL_RenderDrawLine(renderer,outInner.x,outInner.y,outOuter.x,outOuter.y);
         }
         else if (comp.name == "OR Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector<pair<int, int>> points = {
-                {-12, -12}, {6, -12}, {-12, 12}, {6, 12}, {-12, -12}, {-8, -10}, {-8, -10}, {-6, -4},
-                {-6, -4}, {-6, 4}, {-6, 4}, {-8, 10}, {-8, 10}, {-12, 12}, {6, -12}, {10, -8},
-                {10, -8}, {12, -4}, {12, -4}, {12, 4}, {12, 4}, {10, 8}, {10, 8}, {6, 12},
-                {12, 0}, {18, 0}, {-22, -8}, {-12, -8}, {-22, 8}, {-12, 8}
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {6,-12},{-12,12}, {6,12}, {-12,-12}, {-8,-10},{-8,-10}, {-6,-4},
+                {-6,-4}, {-6,4},{-6,4}, {-8,10}, {-8,10}, {-12,12}, {6,-12}, {10,-8},
+                {10,-8}, {12,-4},{12,-4}, {12,4},{12,4}, {10,8},{10,8}, {6,12},
+                {12,0}, {18,0},{-22,-8}, {-12,-8}, {-22,8}, {-12,8}
             };
-            for (size_t i = 0; i<points.size(); i += 2) {
+            for (size_t i=0; i<points.size(); i+=2) {
                 auto p1 = toScreen(points[i].first, points[i].second);
                 auto p2 = toScreen(points[i+1].first, points[i+1].second);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
             }
-            vector<LocalPin> local = ComponentLibrary::get(comp.name).localPins(comp.inputCount);
+            vector<LocalPin> local = ComponentLibrary::getComponentInfo(comp.name).getPinLayout(comp.inputCountValue);
             for (size_t i = 0; i + 1 < local.size(); ++i) {
                 auto outer = toScreen(local[i].x, local[i].y);
                 auto inner = toScreen(-12, local[i].y);
                 SDL_RenderDrawLine(renderer, outer.x, outer.y, inner.x, inner.y);
             }
-            auto outInner = toScreen(12, 0), outOuter = toScreen(local.back().x, 0);
-            SDL_RenderDrawLine(renderer, outInner.x, outInner.y, outOuter.x, outOuter.y);
+            auto outInner = toScreen(12,0), outOuter = toScreen(local.back().x,0);
+            SDL_RenderDrawLine(renderer,outInner.x,outInner.y,outOuter.x,outOuter.y);
         }
         else if (comp.name == "NOT Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector<pair<int, int>> points = {
-                {-12, -12}, {-12, 12}, {-12, -12}, {8, 0}, {-12, 12}, {8, 0}, {-18, 0}, {-12, 0}
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {-12,12},{-12,-12}, {8,0}, {-12,12}, {8,0}, {-18,0}, {-12,0}
             };
-            for (size_t i = 0; i<points.size(); i += 2) {
+            for (size_t i=0; i<points.size(); i+=2) {
                 auto p1 = toScreen(points[i].first, points[i].second);
                 auto p2 = toScreen(points[i+1].first, points[i+1].second);
                 SDL_RenderDrawLine(renderer, p1.x, p1.y, p2.x, p2.y);
             }
             auto bubbleCenter = toScreen(12, 0);
-            int r = 3;
-            for (int a = 0; a<360; a += 30) {
+            int r =3;
+            for (int a=0; a<360; a+=30) {
                 float a1 = a*3.14159f/180.0f, a2 = (a+30)*3.14159f/180.0f;
                 int x1 = bubbleCenter.x + (int)(r*cos(a1)), y1 = bubbleCenter.y + (int)(r*sin(a1));
                 int x2 = bubbleCenter.x + (int)(r*cos(a2)), y2 = bubbleCenter.y + (int)(r*sin(a2));
@@ -3383,78 +3385,78 @@ private:
             SDL_RenderDrawLine(renderer, pOut1.x, pOut1.y, pOut2.x, pOut2.y);
         }
         else if (comp.name == "NAND Gate" || comp.name == "XOR Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             bool nand = comp.name == "NAND Gate";
             SDL_Rect body = {wldToScrX(comp.x)-18, wldToScrY(comp.y)-14, 36, 28};
             SDL_RenderDrawRect(renderer, &body);
-            drawTxt(nand ? "NAND" : "XOR", body.x+2, body.y+6, {0, 0, 0, 255}, libFont);
+            drawTxt(nand ? "NAND" : "XOR", body.x+2, body.y+6, {0,0,0,255}, libFont);
             vector<SDL_Point> pins = gCompPinPos(comp);
-            for (size_t i = 0;i+1<pins.size();++i) {
-                auto edge = toScreen(-18, ComponentLibrary::get(comp.name).localPins(comp.inputCount)[i].y);
-                SDL_RenderDrawLine(renderer, wldToScrX(pins[i].x), wldToScrY(pins[i].y), edge.x, edge.y);
+            for (size_t i=0;i+1<pins.size();++i) {
+                auto edge=toScreen(-18, ComponentLibrary::getComponentInfo(comp.name).getPinLayout(comp.inputCountValue)[i].y);
+                SDL_RenderDrawLine(renderer,wldToScrX(pins[i].x),wldToScrY(pins[i].y),edge.x,edge.y);
             }
             if (!pins.empty()) {
-                auto edge = toScreen(18, 0);
-                SDL_RenderDrawLine(renderer, edge.x, edge.y, wldToScrX(pins.back().x), wldToScrY(pins.back().y));
+                auto edge=toScreen(18,0);
+                SDL_RenderDrawLine(renderer,edge.x,edge.y,wldToScrX(pins.back().x),wldToScrY(pins.back().y));
             }
         }
         else if (comp.name == "D Flip-Flop") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto tl = toScreen(-20, -18), br = toScreen(20, 18);
-            SDL_Rect box = {std::min(tl.x, br.x), std::min(tl.y, br.y), std::abs(br.x-tl.x), std::abs(br.y-tl.y)};
-            SDL_RenderDrawRect(renderer, &box);
-            drawTxt("D", box.x+3, box.y+1, {0, 0, 0, 255}, libFont);
-            drawTxt("CLK", box.x+3, box.y+20, {0, 0, 0, 255}, libFont);
-            drawTxt("Q", box.x+box.w-14, box.y+10, {0, 0, 0, 255}, libFont);
-            auto d1 = toScreen(-30, -10), d2 = toScreen(-20, -10); SDL_RenderDrawLine(renderer, d1.x, d1.y, d2.x, d2.y);
-            auto c1 = toScreen(-30, 10), c2 = toScreen(-20, 10); SDL_RenderDrawLine(renderer, c1.x, c1.y, c2.x, c2.y);
-            auto q1 = toScreen(20, 0), q2 = toScreen(30, 0); SDL_RenderDrawLine(renderer, q1.x, q1.y, q2.x, q2.y);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto tl=toScreen(-20,-18), br=toScreen(20,18);
+            SDL_Rect box={std::min(tl.x,br.x),std::min(tl.y,br.y),std::abs(br.x-tl.x),std::abs(br.y-tl.y)};
+            SDL_RenderDrawRect(renderer,&box);
+            drawTxt("D", box.x+3, box.y+1, {0,0,0,255}, libFont);
+            drawTxt("CLK", box.x+3, box.y+20, {0,0,0,255}, libFont);
+            drawTxt("Q", box.x+box.w-14, box.y+10, {0,0,0,255}, libFont);
+            auto d1=toScreen(-30,-10), d2=toScreen(-20,-10); SDL_RenderDrawLine(renderer,d1.x,d1.y,d2.x,d2.y);
+            auto c1=toScreen(-30,10), c2=toScreen(-20,10); SDL_RenderDrawLine(renderer,c1.x,c1.y,c2.x,c2.y);
+            auto q1=toScreen(20,0), q2=toScreen(30,0); SDL_RenderDrawLine(renderer,q1.x,q1.y,q2.x,q2.y);
         }
         else if (comp.name == "7-Segment") {
-            const ComponentRuntime* runtime = findRuntime(comp.id);
-            vector<bool> on(8, false);
-            if (runtime) on = runtime->segments;
+            const ComponentRuntime* runtimeState = runtimeFor(comp.id);
+            vector<bool> logicHigh(8, false);
+            if (runtimeState) logicHigh = runtimeState->segmentStateList;
             auto segment = [&](int index, int x1, int y1, int x2, int y2) {
-                SDL_Color color = index < (int)on.size() && on[index] ? SDL_Color{235, 25, 25, 255} : SDL_Color{75, 75, 75, 255};
-                SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-                auto p1 = toScreen(x1, y1), p2 = toScreen(x2, y2);
-                for (int offset = -1; offset <= 1; ++offset)
-                    SDL_RenderDrawLine(renderer, p1.x+offset, p1.y, p2.x+offset, p2.y);
+                SDL_Color color = index < (int)logicHigh.size() && logicHigh[index] ? SDL_Color{235,25,25,255} : SDL_Color{75,75,75,255};
+                SDL_SetRenderDrawColor(renderer,color.r,color.g,color.b,color.a);
+                auto p1=toScreen(x1,y1), p2=toScreen(x2,y2);
+                for (int offset=-1; offset<=1; ++offset)
+                    SDL_RenderDrawLine(renderer,p1.x+offset,p1.y,p2.x+offset,p2.y);
             };
-            segment(0, -11, -13, 11, -13); segment(1, -12, -11, -12, -2); segment(2, 12, -11, 12, -2);
-            segment(3, -11, 0, 11, 0); segment(4, -12, 2, -12, 11); segment(5, 12, 2, 12, 11);
-            segment(6, -11, 13, 11, 13);
-            SDL_Color dotColor = on.size()>7 && on[7] ? SDL_Color{235, 25, 25, 255} : SDL_Color{75, 75, 75, 255};
-            auto dot = toScreen(17, 13); drawFilledCircle(dot.x, dot.y, 2, dotColor);
+            segment(0,-11,-13,11,-13); segment(1,-12,-11,-12,-2); segment(2,12,-11,12,-2);
+            segment(3,-11,0,11,0); segment(4,-12,2,-12,11); segment(5,12,2,12,11);
+            segment(6,-11,13,11,13);
+            SDL_Color dotColor = logicHigh.size()>7 && logicHigh[7] ? SDL_Color{235,25,25,255} : SDL_Color{75,75,75,255};
+            auto dot=toScreen(17,13); drawSolidCircle(dot.x,dot.y,2,dotColor);
         }
         else {
-            drawTxt(comp.name.substr(0, 4), wldToScrX(comp.x)-20, wldToScrY(comp.y)-10, {0, 0, 0, 255});
+            drawTxt(comp.name.substr(0,4), wldToScrX(comp.x)-20, wldToScrY(comp.y)-10, {0,0,0,255});
         }
     }
 
     void drawCompPreviewLib(const string& compName, SDL_Rect area) const {
-        SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
+        SDL_SetRenderDrawColor(renderer, 245,245,245,255);
         SDL_RenderFillRect(renderer, &area);
-        SDL_SetRenderDrawColor(renderer, 100, 100, 100, 255);
+        SDL_SetRenderDrawColor(renderer, 100,100,100,255);
         SDL_RenderDrawRect(renderer, &area);
 
         int cx = area.x + area.w / 2, cy = area.y + area.h/ 2;
-        auto rotatePoint = [&](int px, int py, float rad) -> pair<int, int> {
-            float s = std::sin(rad), c = std::cos(rad);
+        auto rotatePoint = [&](int px, int py, float rad) -> pair<int,int> {
+            float s = std::sin(rad) , c = std::cos(rad);
             int dx = px - cx, dy = py - cy;
-            int rx = (int)(dx * c - dy * s) + cx;
-            int ry = (int)(dx * s + dy * c) + cy;
+            int rx = (int)(dx * c - dy * s ) + cx;
+            int ry = (int)(dx * s + dy * c ) + cy;
             return {rx, ry};
         };
         float rad = 0.0f;
         int sx = 1, sy = 1;
-        auto flipPoint = [&](int px, int py) -> pair<int, int> {
-            int dx = px - cx, dy = py - cy;
+        auto flipPoint = [&](int px, int py) -> pair<int,int> {
+            int dx = px - cx, dy = py - cy ;
             return {cx + dx * sx, cy + dy * sy};
         };
-        auto transform = [&] (int x, int y) -> pair<int, int> {
+        auto transform = [&] (int x, int y) -> pair<int,int> {
             auto [fx, fy] = flipPoint(x, y);
-            return rotatePoint(fx, fy, rad);
+            return rotatePoint(fx, fy,rad);
         };
 
         if (compName == "ADC" || compName == "DAC" || compName == "Microcontroller" ||
@@ -3470,7 +3472,7 @@ private:
             else label = compName;
             int tw = 0, th = 0;
             TTF_SizeText(libFont, label.c_str(), &tw, &th);
-            drawTxt(label, cx - tw / 2, cy - th / 2, {25, 45, 75, 255}, libFont);
+            drawTxt(label, cx - tw / 2, cy - th / 2, {25,45,75,255}, libFont);
 
             if (compName == "Keypad 4x4") {
                 SDL_SetRenderDrawColor(renderer, 90, 90, 90, 255);
@@ -3483,116 +3485,116 @@ private:
             }
         }
         else if (compName == "Resistor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             int totalW = min(60, area.w- 10);
             int startX = area.x + (area.w - totalW) / 2;
             int x = startX, y = cy;
-            for (int i = 0; i<4; i++) {
+            for (int i=0; i<4; i++){
                 auto p1 = transform(x, y);
                 auto p2 = transform(x+8, y-8);
-                x += 8;y -= 8;
+                x+=8;y-=8;
                 SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
                 p1 = transform(x, y);
                 p2 = transform(x+8, y+8);
-                x += 8; y += 8;
+                x+=8; y+=8;
                 SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             }
         }
         else if (compName == "Capacitor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto p1 = transform(cx-10, cy-15);
-            auto p2 = transform(cx-10, cy+15);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 = transform (cx-10, cy-15);
+            auto p2 = transform (cx-10, cy+15);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx+10, cy-15);
             p2 = transform(cx+10, cy+15);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
         else if (compName == "Inductor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            int totalW = min(50, area.w - 10);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            int totalW = min (50, area.w - 10);
             int startX = area.x + (area.w - totalW) /2;
             int x = startX, y = cy;
-            for (int i = 0; i< 5; i++) {
+            for (int i=0; i< 5; i++) {
                 auto p1 = transform(x, y);
                 auto p2 = transform(x+5, y-7);
-                x += 5; y -= 7;
-                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-                p1 = transform(x, y);
-                p2 = transform(x+5, y+7);
-                x += 5; y += 7;
+                x+=5; y-=7 ;
+                SDL_RenderDrawLine(renderer, p1.first, p1.second,p2.first, p2.second);
+                p1 = transform (x, y);
+                p2 = transform (x+5, y+7);
+                x+=5; y+=7;
                 SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             }
         }
         else if (compName == "LED") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto p1 = transform(cx-8, cy-10);
-            auto p2 = transform(cx-8, cy+10);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1 =transform(cx-8, cy-10);
+            auto p2 =transform(cx-8, cy+10);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-8, cy-10);
             p2 = transform(cx+4, cy);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            SDL_RenderDrawLine(renderer,p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-8, cy+10);
-            p2 = transform(cx+4, cy);
+            p2 = transform(cx+4, cy) ;
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx +4, cy-10);
             p2 = transform(cx+4, cy+10);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-            p1 = transform(cx+10, cy-8);
+            p1 = transform(cx+10,cy-8);
             p2 = transform(cx+6, cy-4);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx+10, cy-8);
-            p2 = transform(cx+6, cy-2);
+            p2 =transform(cx+6, cy-2);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx+10, cy+8);
             p2 = transform(cx+6, cy+4);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx+10, cy+8);
             p2 = transform(cx+6, cy+2);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
         else if (compName == "Transistor") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            auto p1 = transform(cx, cy-10);
-            auto p2 = transform(cx, cy+10);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            auto p1= transform(cx, cy-10);
+            auto p2= transform(cx, cy+10);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-            p1 = transform(cx-8, cy-4);
+            p1 = transform(cx-8, cy-4 );
             p2 = transform(cx+8, cy-8);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-8, cy+4);
             p2 = transform(cx+8, cy+8);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-            SDL_Rect circle = {cx-12, cy-12, 24, 24};
+            SDL_RenderDrawLine(renderer, p1.first,p1.second, p2.first, p2.second);
+            SDL_Rect circle ={cx-12, cy-12, 24,24};
             SDL_RenderDrawRect(renderer, &circle);
         }
-        else if (compName == "NPN" || compName == "PNP") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_Rect circle = {cx-12, cy-12, 24, 24};
+        else if (compName == "NPN"|| compName == "PNP") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            SDL_Rect circle = {cx-12, cy-12, 24, 24} ;
             SDL_RenderDrawRect(renderer, &circle);
 
             auto coll = transform(cx, cy-12);
             auto emit = transform(cx, cy+12);
             auto base = transform(cx-12, cy);
-            auto center = transform(cx, cy);
+            auto center= transform(cx, cy);
             SDL_RenderDrawLine(renderer, coll.first, coll.second, center.first, center.second);
             SDL_RenderDrawLine(renderer, emit.first, emit.second, center.first, center.second);
             SDL_RenderDrawLine(renderer, base.first, base.second, center.first, center.second);
 
-            vector<pair<int, int>> arrow;
-            if (compName == "NPN") {
-                arrow = {{0, 8}, {-3, 5}, {3, 5}};
+            vector<pair<int,int>> arrow;
+            if(compName == "NPN") {
+                arrow = {{0,8}, {-3,5}, {3,5}};
             }
             else {
-                arrow = {{0, -8}, {-3, -5}, {3, -5}};
+                arrow = {{0,-8},{-3,-5},{3,-5}};
             }
             auto tp = transform(cx + arrow[0].first, cy + arrow[0].second);
             auto ap1 = transform(cx + arrow[1].first, cy + arrow [1].second);
             auto ap2 = transform(cx + arrow[2].first, cy + arrow[2].second);
             SDL_RenderDrawLine(renderer, tp.first, tp.second, ap1.first, ap1.second);
             SDL_RenderDrawLine(renderer, ap1.first, ap1.second, ap2.first, ap2.second);
-            SDL_RenderDrawLine(renderer, ap2.first, ap2.second, tp.first, tp.second);
+            SDL_RenderDrawLine (renderer, ap2.first, ap2.second, tp.first, tp.second);
         }
-        else if (compName == "Ground") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        else if (compName == "Ground" ) {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = transform(cx, cy-10);
             auto p2 = transform(cx, cy);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2. first, p2.second);
@@ -3600,96 +3602,96 @@ private:
             p2 = transform(cx+8, cy);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-5, cy+5);
-            p2 = transform(cx+5, cy+5);
+            p2 = transform(cx+5, cy+5) ;
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             p1 = transform(cx-3, cy+10);
-            p2 = transform(cx+3, cy+10);
+            p2 = transform(cx+3,cy+10);
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
         }
-        else if (compName == "VCC") {
-            SDL_SetRenderDrawColor(renderer, 180, 20, 20, 255);
+        else if ( compName == "VCC") {
+            SDL_SetRenderDrawColor( renderer, 180,20,20,255);
             auto p1 = transform(cx, cy-12);
-            auto p2 = transform(cx, cy+8);
+            auto p2 = transform(cx, cy+8) ;
             SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
-            auto p3 = transform(cx-5, cy+1);
+            auto p3 = transform (cx-5, cy+1);
             auto p4 = transform(cx+5, cy+1);
-            SDL_RenderDrawLine(renderer, p3.first, p3.second, p4.first, p4.second);
+            SDL_RenderDrawLine(renderer , p3.first, p3.second, p4.first, p4.second);
             auto p5 = transform(cx-3, cy-6);
             auto p6 = transform(cx+3, cy-6);
             SDL_RenderDrawLine(renderer, p5.first, p5.second, p6.first, p6.second);
         }
         else if (compName == "DC Voltage Source") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_Rect circle = {cx-12, cy-12, 24, 24}; SDL_RenderDrawRect(renderer, &circle);
-            SDL_RenderDrawLine(renderer, cx, cy-18, cx, cy-12); SDL_RenderDrawLine(renderer, cx, cy+12, cx, cy+18);
-            SDL_RenderDrawLine(renderer, cx-4, cy-5, cx+4, cy-5); SDL_RenderDrawLine(renderer, cx, cy-9, cx, cy-1);
-            SDL_RenderDrawLine(renderer, cx-4, cy+6, cx+4, cy+6);
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);
+            SDL_Rect circle={cx-12,cy-12,24,24}; SDL_RenderDrawRect(renderer,&circle);
+            SDL_RenderDrawLine(renderer,cx,cy-18,cx,cy-12); SDL_RenderDrawLine(renderer,cx,cy+12,cx,cy+18);
+            SDL_RenderDrawLine(renderer,cx-4,cy-5,cx+4,cy-5); SDL_RenderDrawLine(renderer,cx,cy-9,cx,cy-1);
+            SDL_RenderDrawLine(renderer,cx-4,cy+6,cx+4,cy+6);
         }
         else if (compName == "Clock Generator") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            int pts[][2] = {{cx-25, cy+8}, {cx-15, cy+8}, {cx-15, cy-8}, {cx, cy-8}, {cx, cy+8}, {cx+15, cy+8}, {cx+15, cy-8}, {cx+25, cy-8}};
-            for (int i = 0;i<7;++i) SDL_RenderDrawLine(renderer, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);
+            int pts[][2]={{cx-25,cy+8},{cx-15,cy+8},{cx-15,cy-8},{cx,cy-8},{cx,cy+8},{cx+15,cy+8},{cx+15,cy-8},{cx+25,cy-8}};
+            for(int i=0;i<7;++i) SDL_RenderDrawLine(renderer,pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1]);
         }
         else if (compName == "Switch" || compName == "Push Button") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderDrawLine(renderer, cx-28, cy, cx-12, cy); SDL_RenderDrawLine(renderer, cx+12, cy, cx+28, cy);
-            SDL_RenderDrawLine(renderer, cx-12, cy, cx+10, cy-11);
-            if (compName == "Push Button") SDL_RenderDrawLine(renderer, cx, cy-20, cx, cy-11);
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);
+            SDL_RenderDrawLine(renderer,cx-28,cy,cx-12,cy); SDL_RenderDrawLine(renderer,cx+12,cy,cx+28,cy);
+            SDL_RenderDrawLine(renderer,cx-12,cy,cx+10,cy-11);
+            if (compName == "Push Button") SDL_RenderDrawLine(renderer,cx,cy-20,cx,cy-11);
         }
-        else if (compName == "Battery") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        else if (compName == "Battery"){
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto p1 = transform(cx, cy-12);
             auto p2 = transform(cx, cy-4);
-            SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+            SDL_RenderDrawLine (renderer, p1.first, p1.second, p2.first, p2.second);
             auto p3 = transform(cx-4, cy-4);
             auto p4 = transform(cx+4, cy-4);
-            SDL_RenderDrawLine(renderer, p3.first, p3.second, p4.first, p4.second);
+            SDL_RenderDrawLine(renderer, p3.first, p3.second , p4.first, p4.second);
             auto p5 = transform(cx-8, cy+1);
             auto p6 = transform(cx+8, cy+1);
-            SDL_RenderDrawLine(renderer, p5.first, p5.second, p6.first, p6.second);
+            SDL_RenderDrawLine (renderer, p5.first, p5.second, p6.first, p6.second);
             auto p7 = transform(cx, cy+1);
             auto p8 = transform(cx, cy+10);
             SDL_RenderDrawLine(renderer, p7.first, p7.second, p8.first, p8.second);
         }
-        else if (compName == "AND Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector<pair <int, int>> points = {
-                {-20, -12}, {-20, 12}, {-20, -12}, {6, -12}, {-20, 12}, {6, 12}, {6, -12}, {10, -8}, {10, -8}, {12, -4},
-                {12, -4}, {12, 4}, {12, 4}, {10, 8}, {10, 8}, {6, 12}, {12, 0}, {18, 0}, {-26, -8}, {-20, -8},
-                {-26, 8}, {-20, 8}
+        else if (compName =="AND Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector<pair <int,int>> points = {
+                {-20,-12}, {-20,12},{-20,-12}, {6,-12}, {-20,12}, {6,12}, {6,-12}, {10,-8}, {10,-8}, {12,-4},
+                {12,-4}, {12,4},{12,4}, {10,8}, {10,8}, {6,12}, {12,0},{18 ,0}, {-26,-8}, {-20,-8},
+                {-26,8}, {-20,8}
             };
-            for (size_t i = 0; i < points.size(); i += 2) {
+            for (size_t i= 0; i < points.size(); i+=2) {
                 auto p1 = transform(cx + points[i].first, cy + points[i].second);
                 auto p2 = transform(cx + points[i+1].first, cy+ points[i+1].second);
                 SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             }
         }
-        else if (compName == "OR Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector<pair<int, int>> points = {
-                {-12, -12}, {6, -12}, {-12, 12}, {6, 12}, {-12, -12}, {-8, -10}, {-8, -10}, {-6, -4}, {-6, -4}, {-6, 4},
-                {-6, 4}, {-8, 10}, {-8, 10}, {-12, 12}, {6, -12}, {10, -8}, {10, -8}, {12, -4}, {12, -4}, {12, 4},
-                {12, 4}, {10, 8}, {10, 8}, {6, 12}, {12, 0}, {18, 0}, {-22, -8}, {-12, -8}, {-22, 8}, {-12, 8}
+        else if(compName == "OR Gate") {
+            SDL_SetRenderDrawColor(renderer, 0 ,0,0,255);
+            vector<pair<int,int>> points = {
+                {-12,-12}, {6,-12},{-12,12}, {6,12}, {-12,-12}, {-8,-10},{-8,-10}, {-6,-4}, {-6,-4}, {-6,4},
+                {-6,4}, {-8,10}, {-8,10}, {-12,12}, {6,-12}, {10,-8}, {10,-8}, {12,-4}, {12,-4}, {12,4},
+                {12,4}, {10,8},{10,8}, {6,12},{12,0}, {18,0},{-22,-8}, {-12,-8}, {-22,8}, {-12,8}
             };
-            for (size_t i = 0; i < points.size(); i += 2) {
+            for (size_t i = 0; i < points.size(); i+=2) {
                 auto p1 = transform(cx + points[i].first, cy + points[i].second);
                 auto p2 = transform(cx + points[i+1].first, cy + points[i+1].second);
-                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
+                SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first , p2.second);
             }
         }
-        else if (compName == "NOT Gate") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            vector <pair<int, int>> points = {
-                {-12, -12}, {-12, 12}, {-12, -12}, {8, 0}, {-12, 12}, {8, 0}, {-18, 0}, {-12, 0}
+        else if(compName == "NOT Gate") {
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
+            vector <pair<int,int>> points = {
+                {-12,-12}, {-12,12},{-12,-12}, {8,0}, {-12,12}, {8,0}, {-18,0}, {-12,0}
             };
-            for (size_t i = 0; i < points.size(); i += 2) {
+            for (size_t i = 0; i < points.size(); i+=2) {
                 auto p1 = transform(cx + points[i].first, cy + points[i].second);
                 auto p2 = transform(cx + points [i+1].first, cy + points[i+1].second);
                 SDL_RenderDrawLine(renderer, p1.first, p1.second, p2.first, p2.second);
             }
 
             auto bubbleCenter = transform(cx + 12, cy);
-            int r = 3;
+            int r =3;
             for (int a = 0; a < 360; a += 30) {
                 float angle1 = a * 3.14159f / 180.0f;
                 float angle2 = (a + 30)* 3.14159f / 180.0f;
@@ -3699,18 +3701,18 @@ private:
                 int y2 = bubbleCenter.second + (int)(r * sin(angle2));
                 SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
             }
-            auto pOut1 = transform(cx + 15, cy);
-            auto pOut2 = transform(cx + 22, cy);
-            SDL_RenderDrawLine(renderer, pOut1.first, pOut1.second, pOut2.first, pOut2.second);
+            auto pOut1 =transform(cx + 15, cy);
+            auto pOut2 =transform(cx + 22, cy);
+            SDL_RenderDrawLine(renderer, pOut1.first, pOut1.second , pOut2.first, pOut2.second);
         }
         else if (compName == "NAND Gate" || compName == "XOR Gate" || compName == "D Flip-Flop") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_Rect box = {cx-24, cy-15, 48, 30}; SDL_RenderDrawRect(renderer, &box);
+            SDL_SetRenderDrawColor(renderer,0,0,0,255);
+            SDL_Rect box={cx-24,cy-15,48,30}; SDL_RenderDrawRect(renderer,&box);
             string text = compName == "D Flip-Flop" ? "DFF" : (compName == "NAND Gate" ? "NAND" : "XOR");
-            drawTxt(text, cx-18, cy-8, {0, 0, 0, 255}, libFont);
+            drawTxt(text,cx-18,cy-8,{0,0,0,255},libFont);
         }
         else if (compName == "7-Segment") {
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_SetRenderDrawColor(renderer, 0,0,0,255);
             auto topL = transform(cx-12, cy-10);
             auto topR = transform(cx+12, cy-10);
             auto mid = transform(cx, cy);
@@ -3719,66 +3721,66 @@ private:
             auto upL1 = transform(cx-12, cy-10);
             auto upL2 = transform(cx-12, cy-2);
             auto upR1 = transform(cx+12, cy-10);
-            auto upR2 = transform(cx+12, cy -2);
+            auto upR2 = transform(cx+12 , cy -2);
             auto lowL1 = transform(cx-12, cy+2);
             auto lowL2 = transform(cx-12, cy+10);
-            auto lowR1 = transform(cx+12, cy+2);
+            auto lowR1 = transform(cx+12, cy+2) ;
             auto lowR2 = transform(cx+12, cy+10);
 
             SDL_RenderDrawLine(renderer, topL.first, topL.second, topR.first, topR.second);
-            SDL_RenderDrawLine(renderer, upL1.first, upL1.second, upL2.first, upL2.second);
+            SDL_RenderDrawLine(renderer, upL1.first,upL1.second, upL2.first, upL2.second);
             SDL_RenderDrawLine(renderer, upR1.first, upR1.second, upR2.first, upR2.second);
             SDL_RenderDrawLine(renderer, mid.first-10, mid.second, mid.first+10, mid.second);
             SDL_RenderDrawLine(renderer, lowL1.first, lowL1.second, lowL2.first, lowL2.second);
             SDL_RenderDrawLine(renderer, lowR1.first, lowR1.second, lowR2.first, lowR2.second);
-            SDL_RenderDrawLine(renderer, botL.first, botL.second, botR.first, botR.second);
+            SDL_RenderDrawLine(renderer, botL.first, botL.second, botR.first , botR.second);
         }
         else {
-            drawTxt(compName.substr(0, 4), area.x+5, area.y+5, {0, 0, 0, 255});
+            drawTxt(compName.substr(0,4), area.x+5, area.y+5, {0,0,0,255});
         }
     }
 
     string toLower(const string& s) const {
         string lower = s;
-        transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+        transform (lower.begin(), lower.end(), lower.begin(), ::tolower);
         return lower;
     }
 
     void resetLibExpanded() {
         for (auto& cat : libCategories) cat.expanded = false;
-        searchFilter = "";
+        searchFilter = "" ;
         showLib = false;
-        showProp = false;
+        showProp= false;
         undoStack.clear();
         redoStack.clear();
-        selectedIndices.clear();
+        selectedIndices.clear ();
         editingIndex = -1;
         lastClickedIndex = -1;
-        lastClickTime = 0;
+        lastClickTime =0;
         if (searchBox)
-            searchBox->setTxt("Search...");
+            searchBox->setTxt( "Search...");
     }
 
     string fileDialog() {
         char filename [MAX_PATH ] = "";
 
         OPENFILENAMEA ofn;
-        ZeroMemory(&ofn, sizeof(ofn));
-        ofn.lStructSize = sizeof(ofn);
+        ZeroMemory( &ofn, sizeof( ofn ) );
+        ofn.lStructSize = sizeof(ofn );
         ofn.hwndOwner = NULL;
         ofn.lpstrFilter = "Proteus Project Files\0*.proj \0All Files\0*.*\0";
         ofn.lpstrFile = filename;
-        ofn.nMaxFile = MAX_PATH;
+        ofn.nMaxFile =MAX_PATH;
         ofn.Flags = OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
         ofn.lpstrDefExt = "proj";
 
-        if (GetOpenFileNameA(&ofn)) {
-            return string(filename);
+        if (GetOpenFileNameA( &ofn )) {
+            return string( filename );
         }
         return "";
     }
 
-    string firmwareFileDialog() {
+    string selectHexFile() {
         char filename[MAX_PATH] = "";
         OPENFILENAMEA ofn;
         ZeroMemory(&ofn, sizeof(ofn));
@@ -3792,18 +3794,18 @@ private:
         return GetOpenFileNameA(&ofn) ? string(filename) : string();
     }
 
-    string projNameFromPath(const string& path) {
-        size_t pos = path.find_last_of("\\/");
-        string name = (pos != string::npos) ? path.substr(pos + 1) : path;
+    string projNameFromPath( const string& path ) {
+        size_t pos = path.find_last_of( "\\/" );
+        string name = (pos != string::npos ) ? path.substr( pos + 1 ) : path;
         pos = name.find_last_of('.');
-        if (pos != string::npos)
-            name = name.substr(0, pos);
+        if (pos !=string::npos)
+            name = name.substr( 0,pos );
         return name;
     }
 
-    string diffName(const string& base) {
+    string diffName (const string& base) {
         string candidate = base;
-        int counter = 1;
+        int counter= 1;
         bool exists = true;
         while (exists) {
             exists = false;
@@ -3814,7 +3816,7 @@ private:
                 }
             }
             if (exists) {
-                candidate = base + " " + to_string(counter);
+                candidate =base + " " + to_string(counter);
                 counter++;
             }
         }
@@ -3825,14 +3827,14 @@ private:
         string result;
         for (size_t i = 0; i < vec.size(); ++i) {
             if (i > 0) result += ",";
-            result += vec[i];
+            result +=vec[i];
         }
         return result;
     }
 
     void loadRecentPs() {
         ifstream file("recents.txt");
-        if (file.is_open()) {
+        if (file.is_open( )) {
             string line;
             while (getline(file, line)) {
                 if (line.empty())
@@ -3840,13 +3842,13 @@ private:
                 stringstream ss(line);
                 string n, p, d;
                 int cw = 800, ch = 600;
-                getline(ss, n, '|');
+                getline( ss, n, '|');
                 getline(ss, p, '|');
                 getline(ss, d, '|');
                 ss >> cw >> ch;
                 vector<string> ac;
                 if (ss.peek() == '|') {
-                    ss.ignore();
+                    ss.ignore ();
                     string compList;
                     getline(ss, compList);
                     stringstream cs(compList);
@@ -3861,21 +3863,21 @@ private:
             file.close();
         }
 
-        int limit = min((int)recentPs.size(), 5);
+        int limit= min((int)recentPs.size(), 5);
         for (int i = 0; i< limit; i++) {
             string displayText = recentPs [i].name + "  (" +recentPs[i].lastP + ")";
-            btnRecents.push_back(new BUTTONS(renderer, font, 450, 190 + (i *65), 340, 50, {230, 230, 230, 255}, {200, 230, 255, 255},
+            btnRecents.push_back (new BUTTONS( renderer, font, 450, 190 + (i *65), 340, 50,{230, 230,230, 255}, {200, 230, 255, 255},
                 displayText));
         }
     }
 
     void saveRecentPs() {
         ofstream file("recents.txt");
-        if (!file.is_open())
+        if ( !file.is_open())
             return;
         for (const auto& p :recentPs) {
             file << p.name << "|" <<p.path << "|" << p.lastP << "|" <<p.canvasW << "|" << p.canvasH;
-            if (!p.activeComponents.empty()) {
+            if (!p.activeComponents.empty ()) {
                 file << "|" << joinStrings(p.activeComponents);
             }
             file << "\n";
@@ -3884,7 +3886,7 @@ private:
     }
 
     void addToRecent(const project& prj) {
-        recentPs.erase(remove_if(recentPs.begin(), recentPs.end(), [&] (const project& p) { return p.path == prj.path;}), recentPs.end());
+        recentPs.erase (remove_if(recentPs.begin(), recentPs.end() ,[&] (const project& p ) { return p.path == prj.path;}), recentPs.end());
 
         recentPs.insert(recentPs.begin(), prj);
 
@@ -3896,53 +3898,53 @@ private:
 
         for (auto btn : btnRecents)
             delete btn;
-        btnRecents.clear();
+        btnRecents.clear ();
 
         int limit = min((int)recentPs.size(), 5);
         for (int i = 0; i < limit;i++) {
             string displayText = recentPs[i].name + "  (" + recentPs [i].lastP + ")";
-            btnRecents.push_back(new BUTTONS(renderer, font, 450, 190 +(i * 65), 340, 50, {230, 230, 230, 255}, {200, 230, 255, 255},
+            btnRecents.push_back(new BUTTONS (renderer, font, 450, 190 +(i * 65), 340, 50,{230, 230, 230, 255}, {200, 230, 255, 255},
                 displayText));
         }
     }
 
     void clearRecents() {
         recentPs.clear();
-        saveRecentPs();
+        saveRecentPs ();
         for (auto btn : btnRecents)
-            delete btn;
+            delete btn ;
         btnRecents.clear();
     }
 
     string gDate() {
-        time_t now = time(0);
+        time_t now = time( 0);
         tm* ltm = localtime(&now);
         char buf[20];
         snprintf(buf, sizeof(buf), "%04d/%02d/%02d", 1900 + ltm->tm_year, 1 + ltm-> tm_mon, ltm->tm_mday);
         return string(buf);
     }
 
-    void openNameDialog() {
+    void openNameDialog () {
         if (!txtProjectName) {
-            txtProjectName = new txtIn(renderer, font, 275, 240, 300, 35, false);
-            btnNameOK = new BUTTONS(renderer, font, 275, 340, 120, 40, {255, 255, 255, 255}, {240, 240, 240, 255}, "OK");
-            btnNameCancel = new BUTTONS(renderer, font, 455, 340, 120, 40, {255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
+            txtProjectName = new txtIn(renderer,font, 275, 240, 300, 35, false);
+            btnNameOK =new BUTTONS(renderer, font, 275, 340, 120, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "OK");
+            btnNameCancel = new BUTTONS(renderer, font, 455, 340, 120,40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
         }
         txtProjectName-> setTxt(penProjectName);
         txtProjectName->setActive(true);
         currentState = app::PROJECT_NAME_DIALOG;
     }
 
-    void saveProjectToFile(const string& path) {
+    void saveProjectToFile(const string& path){
         ofstream file(path);
-        if (!file.is_open())
+        if (!file.is_open() )
             return;
         file << canvasWidth << " " << canvasHeight << "\n";
         file << joinStrings(activeComps) << "\n";
         file << placedComponents. size() << "\n";
         for (const auto& pc : placedComponents) {
             file << pc.name << "|" << pc.x << "|" << pc.y << "|"<< pc.angle << "|" << pc.flipH << "|" << pc.flipV << "|" << pc.label << "|" << pc.value
-                 << "|" << pc.id << "|" << pc.inputCount << "|" << pc.propagationDelayMs << "|" << pc.switchState << "\n";
+                 << "|" << pc.id << "|" << pc.inputCountValue << "|" << pc.propagationDelay << "|" << pc.switchClosed << "\n";
         }
         file << wires.size() << "\n";
         for (const auto& wire : wires) {
@@ -3952,7 +3954,7 @@ private:
             }
             file << "\n";
         }
-        file << junctions.size() << "\n";
+        file << junctions.size() << "\n" ;
         for (const auto& j : junctions) {
             file << j.x << " " << j.y << "\n";
         }
@@ -3961,7 +3963,7 @@ private:
     }
 
     bool loadProjectFromFile(const string& path) {
-        ifstream file(path);
+        ifstream file (path);
         if (!file.is_open())
             return false;
         file >> canvasWidth >> canvasHeight;
@@ -3976,31 +3978,31 @@ private:
             }
         }
         placedComponents.clear();
-        componentRuntime.clear();
-        clearAdvancedRuntime();
-        nextComponentId = 1;
+        runtimeData.clear();
+        clearDeviceStates();
+        nextComponentNumber = 1;
         int count = 0;
         if (file >> count) {
             file.ignore();
             for (int i = 0; i < count; ++i) {
-                if (!getline(file, line)) break;
-                stringstream ss(line);
+                if (!getline(file, line) ) break;
+                stringstream ss (line);
                 string token;
                 placedComp pc;
-                if (getline(ss, token, '|')) pc.name = token;
-                if (getline(ss, token, '|')) pc.x = stoi(token);
-                if (getline(ss, token, '|')) pc.y = stoi(token);
-                if (getline(ss, token, '|')) pc.angle = stoi(token);
-                if (getline(ss, token, '|')) pc.flipH = (token == "1");
-                if (getline(ss, token, '|')) pc.flipV = (token == "1");
-                if (getline(ss, token, '|')) pc.label = token;
-                if (getline(ss, token, '|')) pc.value = token;
-                if (getline(ss, token, '|') && !token.empty()) pc.id = stoi(token);
-                if (getline(ss, token, '|') && !token.empty()) pc.inputCount = stoi(token);
-                if (getline(ss, token, '|') && !token.empty()) pc.propagationDelayMs = stod(token);
-                if (getline(ss, token, '|') && !token.empty()) pc.switchState = (token == "1");
-                clampToCanvas(pc.x, pc.y);
-                initializeComponent(pc);
+                if ( getline(ss, token, '|')) pc.name = token;
+                if ( getline(ss, token, '|')) pc.x = stoi(token);
+                if ( getline(ss, token, '|')) pc.y = stoi(token);
+                if ( getline(ss, token, '|')) pc.angle = stoi(token );
+                if ( getline(ss, token, '|')) pc.flipH = (token == "1");
+                if ( getline(ss, token, '|')) pc.flipV = (token == "1");
+                if ( getline(ss, token, '|')) pc.label =token;
+                if ( getline(ss, token, '|')) pc.value =token;
+                if ( getline(ss, token, '|') && !token.empty()) pc.id = stoi(token);
+                if ( getline(ss, token, '|') && !token.empty()) pc.inputCountValue = stoi(token);
+                if ( getline(ss, token, '|') && !token.empty()) pc.propagationDelay = stod(token);
+                if ( getline(ss, token, '|') && !token.empty()) pc.switchClosed = (token == "1");
+                clampToCanvas (pc.x, pc.y);
+                initComponent(pc);
                 placedComponents.push_back(pc);
             }
         }
@@ -4025,10 +4027,10 @@ private:
         junctions.clear();
         int junctionCount = 0;
         if (file >> junctionCount) {
-            file.ignore();
+            file.ignore ();
             for (int i = 0; i < junctionCount; ++i) {
                 if (!getline(file, line)) break;
-                stringstream ss(line);
+                stringstream ss (line);
                 SDL_Point pt;
                 ss >> pt.x >> pt.y;
                 junctions.push_back(pt);
@@ -4039,8 +4041,8 @@ private:
         editingIndex = -1;
         lastClickedIndex = -1;
         lastClickTime = 0;
-        updateWorldBounds();
-        return true;
+        updateWorldBounds ();
+        return true ;
     }
 
 public:
@@ -4048,76 +4050,76 @@ public:
         window = nullptr;
         renderer = nullptr;
         font = nullptr;
-        titleFont = nullptr;
+        titleFont =nullptr;
         libFont = nullptr;
         running = false;
         currentState = app::STARTUP_MENU;
         canvasWidth = 800;
-        canvasHeight = 600;
+        canvasHeight =600;
         updateWorldBounds();
         txtWidth = nullptr;
         txtHeight = nullptr;
-        btnCustomOK = nullptr;
+        btnCustomOK= nullptr;
         btnCustomCancel = nullptr;
         btnPresetCustom = nullptr;
-        txtProjectName = nullptr;
+        txtProjectName =nullptr;
         btnNameOK = nullptr;
         btnNameCancel = nullptr;
         btnBack = nullptr;
         btnRun = nullptr;
         btnPause = nullptr;
         btnStop = nullptr;
-        btnRemRecents = nullptr;
+        btnRemRecents = nullptr ;
         penProjectName = "Untitled";
         grdSz = 20;
-        zmLvl = 1.0f;
+        zmLvl =1.0f;
         panX = 0;
         panY = 0;
         isPan = false;
-        statH = 30;
+        statH = 30 ;
         winW = 850;winH = 600;
-        mseX = 0; mseY = 0;
-        zoomRct = {0, 0, 0, 0};
-        showGrid = true;
+        mseX = 0 ; mseY = 0;
+        zoomRct = {0,0,0,0} ;
+        showGrid = true ;
         currentTool = Tool::SELECT;
-        tlbrH = 72;
-        pnlLW = 220; pnlRW = 140;
+        tlbrH = 72 ;
+        pnlLW = 220 ; pnlRW = 140;
         vpX = pnlLW; vpY = tlbrH;
         vpW = winW - pnlLW - pnlRW;
-        vpH = winH - tlbrH - statH;
-        selLibItm = "";
+        vpH = winH - tlbrH - statH ;
+        selLibItm = "" ;
         showLib = false;
         showProp = false;
         activeCompsY = 0;
         currentProjectPath = "";
-        draggingComponents = false;
+        draggingComponents =false;
         drawingSelection = false;
-        selectionRect = {0, 0, 0, 0};
+        selectionRect = {0,0,0,0};
         propLabelInput = nullptr;
         propValueInput = nullptr;
-        btnPropOK = nullptr;
+        btnPropOK =nullptr;
         btnPropCancel = nullptr;
         editingIndex = -1;
         lastClickedIndex = -1;
         lastClickTime = 0;
-        mouseHandled = false;
+        mouseHandled= false;
         wireStartActive = false;
         hoveredPinActive = false;
-        nextComponentId = 1;
-        wireVoltages.clear();
-        simulationLog.clear();
-        lastSimulationWarnings.clear();
+        nextComponentNumber = 1;
+        wireVoltageValues.clear();
+        simulationLogLines.clear();
+        lastWarningSet.clear();
 
-        simulationState = SimulationState::STOPPED;
-        simulationTimeMs = 0;
-        lastSimulationRealTick = 0;
+        simulationStatus = SimulationState::STOPPED;
+        simulationTime = 0;
+        lastRealTimeTick = 0;
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
-        for (size_t i = 0; i<libItms.size(); i++) {
+        for (size_t i=0; i<libItms.size(); i++) {
             libRcts.push_back({5, tlbrH + 55 + (int)i*40, pnlLW-10, 28});
         }
 
         searchBox = nullptr;
-        searchFilter = "";
+        searchFilter ="";
         showLib = true;
 
         libCategories.push_back(tree("Sources", {"Ground","VCC","DC Voltage Source","Battery","Clock Generator"}));
@@ -4125,14 +4127,14 @@ public:
         libCategories.push_back(tree("Interactive", {"Switch","Push Button"}));
         libCategories.push_back(tree("Digital Logic", {"AND Gate","OR Gate","NOT Gate","NAND Gate","XOR Gate","D Flip-Flop"}));
         libCategories.push_back(tree("Display", {"LED","7-Segment"}));
-        vector<string> advancedComponents;
-        advancedComponents.push_back("ADC");
-        advancedComponents.push_back("DAC");
-        advancedComponents.push_back("Microcontroller");
-        advancedComponents.push_back("External Memory");
-        advancedComponents.push_back("LCD 16x2");
-        advancedComponents.push_back("Keypad 4x4");
-        if (!advancedComponents.empty()) libCategories.push_back(tree("Advanced", advancedComponents));
+        vector<string> advancedComponentNames;
+        advancedComponentNames.push_back("ADC");
+        advancedComponentNames.push_back("DAC");
+        advancedComponentNames.push_back("Microcontroller");
+        advancedComponentNames.push_back("External Memory");
+        advancedComponentNames.push_back("LCD 16x2");
+        advancedComponentNames.push_back("Keypad 4x4");
+        if (!advancedComponentNames.empty()) libCategories.push_back(tree("Advanced", advancedComponentNames));
         libCategories.push_back(tree("Transistor", {"NPN","PNP"}));
     }
 
@@ -4145,7 +4147,7 @@ public:
         delete btnCancelDialog;
         delete btnPresetCustom;
         delete txtWidth;
-        delete txtHeight;
+        delete txtHeight ;
         delete btnCustomOK;
         delete btnCustomCancel;
         delete txtProjectName;
@@ -4156,7 +4158,7 @@ public:
         delete btnPause;
         delete btnStop;
         delete searchBox;
-        delete propLabelInput;
+        delete propLabelInput ;
         delete propValueInput;
         delete btnPropOK;
         delete btnPropCancel;
@@ -4170,7 +4172,7 @@ public:
             TTF_CloseFont(titleFont);
         if (font)
             TTF_CloseFont(font);
-        if (renderer)
+        if (renderer )
             SDL_DestroyRenderer(renderer);
         if (window)
             SDL_DestroyWindow(window);
@@ -4181,19 +4183,19 @@ public:
 
     bool initial() {
         SDL_SetMainReady();
-        if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        if(SDL_Init(SDL_INIT_VIDEO) < 0) {
             cerr <<"SDL Init failed: " <<SDL_GetError() << endl;
             return false;
         }
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
-        if (TTF_Init() == -1) {
+        if (TTF_Init() ==-1){
             cerr << "SDL_ttf Init failed: " << TTF_GetError() << endl;
             return false;
         }
-        window = SDL_CreateWindow("Proteus Clone - Startup Menu", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 850, 600, SDL_WINDOW_SHOWN| SDL_WINDOW_RESIZABLE);
+        window =SDL_CreateWindow("Proteus Clone - Startup Menu", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 850, 600, SDL_WINDOW_SHOWN| SDL_WINDOW_RESIZABLE);
         if (!window)
             return false;
-        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        renderer =SDL_CreateRenderer(window,-1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
         if (!renderer) {
             cerr << "Accelerated renderer unavailable; using software renderer. " << SDL_GetError() << endl;
             renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
@@ -4203,9 +4205,9 @@ public:
             return false;
         }
 
-        font = openApplicationFont(20);
-        titleFont = openApplicationFont(30);
-        libFont = openApplicationFont(14);
+        font = loadAppFont(20);
+        titleFont = loadAppFont(30);
+        libFont = loadAppFont(14);
         if (!font || !titleFont || !libFont) {
             const char* message = "No usable Windows font was found. Expected Arial, Segoe UI, or Tahoma in C:\\Windows\\Fonts.";
             cerr << message << endl;
@@ -4213,59 +4215,59 @@ public:
             return false;
         }
 
-        btnNewP = new BUTTONS(renderer, font, 60, 190, 300, 60, {100, 200, 150, 255}, {120, 220, 170, 255}, "Create New Project");
-        btnOpenP = new BUTTONS(renderer, font, 60, 280, 300, 60, {144, 238, 144, 255}, {152, 251, 152, 255}, "Open Existing Project");
-        btnRemRecents = new BUTTONS(renderer, font, 60, 500, 200, 40, {255, 204, 153, 255}, {255, 178, 102, 255}, "Remove Recents");
-        btnPresetA4 = new BUTTONS(renderer, font, 213, 180, 180, 45, {200, 155, 240, 255}, {180, 130, 225, 255}, "A4 (800x600)");
-        btnPresetA3 = new BUTTONS(renderer, font, 456, 180, 180, 45, {200, 155, 240, 255}, {180, 130, 225, 255},"A3 (1200x800)");
-        btnPresetCustom = new BUTTONS(renderer, font, 325, 245, 200, 45, {200, 155, 240, 255}, {180, 130, 225, 255}, "Custom Size...");
-        btnCancelDialog = new BUTTONS(renderer, font, 325, 390, 200, 45, {255, 255, 255, 255}, {240, 240, 240, 255},"Cancel");
+        btnNewP = new BUTTONS(renderer, font, 60, 190, 300, 60, {100, 200,150, 255}, {120, 220, 170, 255}, "Create New Project") ;
+        btnOpenP = new BUTTONS(renderer, font, 60, 280, 300,60,{144, 238, 144, 255}, {152, 251, 152, 255}, "Open Existing Project");
+        btnRemRecents = new BUTTONS (renderer, font, 60, 500, 200, 40, {255, 204, 153, 255}, {255, 178, 102, 255}, "Remove Recents");
+        btnPresetA4 = new BUTTONS (renderer, font,213, 180, 180, 45, {200,155, 240, 255}, {180, 130, 225, 255}, "A4 (800x600)");
+        btnPresetA3 =new BUTTONS(renderer, font, 456, 180,180, 45,{200, 155, 240, 255}, {180, 130, 225, 255},"A3 (1200x800)");
+        btnPresetCustom = new BUTTONS (renderer, font, 325, 245, 200,45,{200, 155, 240, 255}, {180, 130,225, 255}, "Custom Size...");
+        btnCancelDialog = new BUTTONS(renderer,font, 325, 390, 200, 45, {255, 255, 255, 255}, {240,240, 240, 255},"Cancel");
 
-        btnBack = new BUTTONS(renderer, font, 5, 8, 60, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Back");
+        btnBack = new BUTTONS(renderer, font, 5, 8, 60, 24, {255,255,255,255}, {230,230,230,255}, "Back");
 
-        btnRun = new BUTTONS(renderer, font, 120, 42, 60, 24, {170, 235, 180, 255}, {140, 220, 155, 255}, "Run");
-        btnPause = new BUTTONS(renderer, font, 190, 42, 70, 24, {255, 230, 150, 255}, {245, 210, 110, 255}, "Pause");
-        btnStop = new BUTTONS(renderer, font, 270, 42, 60, 24, {245, 170, 170, 255}, {230, 135, 135, 255}, "Stop");
-        int xpos = 120;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Select")); xpos += 80;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Wire")); xpos += 80;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 180, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Component Library")); xpos += 190;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Save")); xpos += 65;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Load")); xpos += 65;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Undo")); xpos += 65;
-        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55, 24, {255, 255, 255, 255}, {230, 230, 230, 255}, "Redo"));
+        btnRun = new BUTTONS(renderer, font, 120, 42, 60, 24, {170,235,180,255}, {140,220,155,255}, "Run");
+        btnPause = new BUTTONS(renderer, font, 190, 42, 70, 24, {255,230,150,255}, {245,210,110,255}, "Pause");
+        btnStop = new BUTTONS(renderer, font, 270, 42, 60, 24, {245,170,170,255}, {230,135,135,255}, "Stop");
+        int xpos= 120;
+        tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos += 80;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 180,24,{255,255,255,255},{230,230,230,255}, "Component Library")) ; xpos+=190;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Save")); xpos += 65;
+        tlbrBtns.push_back(new BUTTONS (renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Load")); xpos+= 65;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Undo")); xpos+=65;
+        tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 55,24, {255,255,255,255},{230,230,230,255}, "Redo"));
 
-        searchBox = new txtIn(renderer, font, 5, tlbrH+5, pnlLW-10, 25, false);
+        searchBox = new txtIn (renderer,font, 5, tlbrH+5, pnlLW-10, 25, false);
         searchBox->setTxt("Search...");
 
         loadRecentPs();
-        running = true;
+        running =true;
         return true;
     }
 
     void handleE() {
         SDL_Event ev;
-        while (SDL_PollEvent(&ev) != 0) {
+        while (SDL_PollEvent(&ev) !=0) {
             if (ev.type == SDL_QUIT) {
                 running = false;
             }
             if (ev.type == SDL_WINDOWEVENT) {
-                if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                if (ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED){
                     winW = ev.window.data1;
                     winH = ev.window.data2;
                 }
-                else if (ev.window.event == SDL_WINDOWEVENT_RESTORED || ev.window.event == SDL_WINDOWEVENT_MAXIMIZED) {
-                    SDL_GetWindowSize(window, &winW, &winH);
+                else if (ev.window.event == SDL_WINDOWEVENT_RESTORED ||ev.window.event == SDL_WINDOWEVENT_MAXIMIZED){
+                    SDL_GetWindowSize (window, &winW, &winH);
                 }
             }
             if (ev.type == SDL_MOUSEMOTION) {
-                SDL_GetMouseState(&mseX, &mseY);
+                SDL_GetMouseState(&mseX , &mseY);
             }
 
             int adjX = mseX, adjY = mseY;
 
-            if (currentState == app:: NEW_PROJECT_DIALOG) {
-                int dlgW = 550, dlgH = 420;
+            if (currentState == app:: NEW_PROJECT_DIALOG){
+                int dlgW = 550,dlgH = 420;
                 int offsetX = (winW - dlgW) / 2 - 150;
                 int offsetY = (winH - dlgH) / 2 - 80;
                 adjX = mseX - offsetX;
@@ -4276,7 +4278,7 @@ public:
                 int offsetX = (winW - dlgW) / 2 - 150;
                 int offsetY = (winH - dlgH) / 2 - 80;
                 adjX = mseX - offsetX;
-                adjY = mseY - offsetY;
+                adjY = mseY - offsetY ;
             }
             else if (currentState == app:: PROJECT_NAME_DIALOG) {
                 int dlgW = 450, dlgH = 300;
@@ -4289,25 +4291,25 @@ public:
             if (currentState == app:: STARTUP_MENU) {
                 btnNewP->events(ev);
                 btnOpenP->events(ev);
-                btnRemRecents->events(ev);
+                btnRemRecents->events (ev);
                 for (auto btn: btnRecents) btn->events(ev);
                 if (btnNewP-> click(ev)) {
                     currentState = app::NEW_PROJECT_DIALOG;
                 }
-                else if (btnOpenP->click(ev)) {
+                else if (btnOpenP->click(ev)){
                     string chosen = fileDialog();
                     if (!chosen.empty()) {
-                        if (loadProjectFromFile(chosen)) {
+                        if (loadProjectFromFile (chosen)) {
                             currentProjectPath = chosen;
-                            fitWindowToCanvas();
-                            SDL_SetWindowMinimumSize(window, 400, 300);
-                            SDL_SetWindowMaximumSize(window, 0, 0);
-                            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-                            resetLibExpanded();
+                            fitWindowToCanvas() ;
+                            SDL_SetWindowMinimumSize (window, 400, 300);
+                            SDL_SetWindowMaximumSize (window, 0, 0);
+                            SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);
+                            resetLibExpanded() ;
                             resetView();
                             selLibItm = "";
                             currentTool = Tool::SELECT;
-                            SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
+                            SDL_FlushEvent( SDL_MOUSEBUTTONDOWN );
                             currentState = app::WORKSPACE;
                             cout << "Opened project: " << chosen << endl;
                         } else {
@@ -4322,60 +4324,60 @@ public:
                     for (size_t i = 0; i < btnRecents.size(); i++) {
                         if (btnRecents [i]->click(ev)) {
                             cout << "Loading project: " << recentPs[i].name << endl;
-                            string path = recentPs[i].path;
+                            string path= recentPs[i].path;
                             if (loadProjectFromFile(path)) {
                                 currentProjectPath = path;
                             } else {
                                 canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
                                 activeComps = recentPs[i].activeComponents;
                                 placedComponents.clear();
-                                componentRuntime.clear();
-                                clearAdvancedRuntime();
-                                nextComponentId = 1;
+                                runtimeData.clear();
+                                clearDeviceStates();
+                                nextComponentNumber = 1;
                                 currentProjectPath = path;
                             }
                             fitWindowToCanvas();
                             SDL_SetWindowMinimumSize(window, 400, 300);
-                            SDL_SetWindowMaximumSize(window, 0, 0);
+                            SDL_SetWindowMaximumSize(window, 0, 0) ;
                             SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-                            resetLibExpanded();
+                            resetLibExpanded ();
                             resetView();
                             selLibItm = "";
                             currentTool = Tool::SELECT;
-                            SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
+                            SDL_FlushEvent (SDL_MOUSEBUTTONDOWN);
                             currentState = app::WORKSPACE;
                         }
                     }
                 }
             }
-            else if (currentState == app::NEW_PROJECT_DIALOG) {
+            else if (currentState == app::NEW_PROJECT_DIALOG ) {
                 SDL_Event adjEv = ev;
-                if (ev.type == SDL_MOUSEBUTTONDOWN) {
+                if (ev.type ==SDL_MOUSEBUTTONDOWN) {
                     adjEv.button.x = adjX;
                     adjEv.button.y = adjY;
                 }
                 else if (ev.type == SDL_MOUSEMOTION) {
-                    adjEv.motion.x = adjX;
-                    adjEv.motion.y = adjY;
+                    adjEv.motion.x =adjX;
+                    adjEv.motion.y =adjY;
                 }
                 btnPresetA4->events(adjEv); btnPresetA3->events(adjEv); btnPresetCustom-> events(adjEv); btnCancelDialog->events(adjEv);
                 if (btnPresetA4->click(adjEv)) {
-                    canvasWidth = 800; canvasHeight = 600; penProjectName = diffName("Untitled"); openNameDialog();
+                    canvasWidth = 800; canvasHeight = 600; penProjectName =diffName("Untitled"); openNameDialog();
                 }
                 else if (btnPresetA3->click(adjEv)) {
                     canvasWidth = 1200; canvasHeight = 800; penProjectName = diffName("Untitled"); openNameDialog();
                 }
                 else if (btnPresetCustom->click(adjEv)) {
-                    if (!txtWidth) {
+                    if ( !txtWidth){
                         txtWidth = new txtIn(renderer, font, 285, 225, 100, 35, true);
-                        txtHeight = new txtIn(renderer, font, 465, 225, 100, 35, true);
-                        btnCustomOK = new BUTTONS(renderer, font, 315, 390, 100, 40, {255, 255, 255, 255}, {240, 240, 240, 255}, "OK");
-                        btnCustomCancel = new BUTTONS(renderer, font, 435, 390, 100, 40, {255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
+                        txtHeight = new txtIn(renderer,font, 465, 225, 100, 35, true);
+                        btnCustomOK = new BUTTONS(renderer, font, 315, 390, 100, 40, {255,255, 255, 255}, {240, 240, 240, 255}, "OK");
+                        btnCustomCancel= new BUTTONS(renderer, font, 435, 390,100, 40,{255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
                     }
                     txtWidth->setTxt("");
                     txtHeight->setTxt("");
                     txtWidth->setActive(true); txtHeight->setActive(false);
-                    currentState = app::CUSTOM_SIZE_DIALOG;
+                    currentState =app::CUSTOM_SIZE_DIALOG;
                 }
                 else if (btnCancelDialog->click(adjEv)) { currentState = app::STARTUP_MENU;}
             }
@@ -4388,7 +4390,7 @@ public:
                     adjEv.motion.x = adjX;
                     adjEv.motion.y = adjY;
                 }
-                if (txtWidth && txtWidth->isActive())
+                if (txtWidth && txtWidth->isActive ())
                     txtWidth-> handleEvent(adjEv);
                 if (txtHeight && txtHeight->isActive())
                     txtHeight->handleEvent(adjEv);
@@ -4396,34 +4398,34 @@ public:
                     btnCustomOK->events(adjEv);
                 if (btnCustomCancel)
                     btnCustomCancel->events(adjEv);
-                if (adjEv.type == SDL_MOUSEBUTTONDOWN && adjEv.button.button == SDL_BUTTON_LEFT) {
+                if (adjEv.type == SDL_MOUSEBUTTONDOWN && adjEv.button.button== SDL_BUTTON_LEFT) {
                     int mx = adjEv.button.x, my = adjEv.button.y;
                     if (txtWidth && txtWidth->mouseIn(mx, my)) {
-                        txtWidth->setActive(true);
+                        txtWidth->setActive( true);
                         if (txtHeight)
                             txtHeight-> setActive(false);
                     }
                     else if (txtHeight && txtHeight->mouseIn(mx, my)) {
-                        txtHeight->setActive(true);
+                        txtHeight->setActive( true );
                         if (txtWidth)
                             txtWidth->setActive(false);
                     }
-                    else { if (txtWidth) txtWidth->setActive(false);
+                    else { if (txtWidth) txtWidth->setActive (false);
                         if (txtHeight)
                             txtHeight->setActive(false); }
                 }
-                if (btnCustomOK && btnCustomOK->click(adjEv)) {
-                    string wStr = txtWidth ? txtWidth->gTxt() : ""; string hStr = txtHeight ? txtHeight->gTxt(): "";
-                    if (!wStr.empty() && !hStr.empty()) { canvasWidth = stoi(wStr); canvasHeight = stoi(hStr); }
+                if (btnCustomOK && btnCustomOK->click(adjEv) ) {
+                    string wStr= txtWidth ? txtWidth->gTxt() : ""; string hStr = txtHeight ? txtHeight->gTxt(): "";
+                    if (!wStr.empty() && !hStr.empty()) { canvasWidth = stoi (wStr); canvasHeight = stoi(hStr); }
                     else { canvasWidth = 800; canvasHeight = 600; }
                     if (txtWidth) txtWidth->setActive(false);
                     if (txtHeight) txtHeight->setActive(false);
-                    updateWorldBounds();
+                    updateWorldBounds ();
                     penProjectName = diffName("Untitled"); openNameDialog();
                 }
-                else if (btnCustomCancel && btnCustomCancel->click(adjEv)) {
+                else if ( btnCustomCancel && btnCustomCancel->click(adjEv)) {
                     if (txtWidth)
-                        txtWidth->setActive(false);
+                        txtWidth->setActive (false);
                     if (txtHeight)
                         txtHeight->setActive(false);
                     currentState = app ::NEW_PROJECT_DIALOG;
@@ -4431,7 +4433,7 @@ public:
             }
             else if (currentState == app::PROJECT_NAME_DIALOG) {
                 SDL_Event adjEv = ev;
-                if (ev.type == SDL_MOUSEBUTTONDOWN) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN){
                     adjEv.button.x = adjX;
                     adjEv.button.y = adjY;
                 } else if (ev.type == SDL_MOUSEMOTION) {
@@ -4442,84 +4444,84 @@ public:
                 if (txtProjectName && txtProjectName->isActive())
                     txtProjectName->handleEvent(adjEv);
                 if (btnNameOK)
-                    btnNameOK->events(adjEv);
+                    btnNameOK->events(adjEv );
                 if (btnNameCancel)
                     btnNameCancel->events(adjEv);
-                if (adjEv.type == SDL_MOUSEBUTTONDOWN && adjEv.button.button == SDL_BUTTON_LEFT) {
+                if (adjEv.type == SDL_MOUSEBUTTONDOWN && adjEv.button.button ==SDL_BUTTON_LEFT){
                     int mx = adjEv.button.x, my = adjEv.button.y;
-                    if (txtProjectName && txtProjectName->mouseIn(mx, my)) txtProjectName->setActive(true);
+                    if (txtProjectName && txtProjectName->mouseIn(mx, my)) txtProjectName->setActive (true);
                     else {
                         if (txtProjectName)
                             txtProjectName->setActive(false);
                     }
                 }
-                if (btnNameOK && btnNameOK->click(adjEv)) {
+                if(btnNameOK && btnNameOK->click(adjEv)) {
                     string name = txtProjectName ? txtProjectName->gTxt() : "";
                     if (name.empty()) name = "Untitled";
                     string finalName = diffName(name);
                     string path = "./" + finalName + ".proj";
                     activeComps.clear();
                     placedComponents.clear();
-                    componentRuntime.clear();
-                    clearAdvancedRuntime();
-                    nextComponentId = 1;
+                    runtimeData.clear();
+                    clearDeviceStates();
+                    nextComponentNumber = 1;
                     wires.clear();
                     junctions.clear();
-                    undoStack.clear();
+                    undoStack.clear() ;
                     redoStack.clear();
                     selectedIndices.clear();
-                    editingIndex = -1;
+                    editingIndex =-1;
                     lastClickedIndex = -1;
                     lastClickTime = 0;
-                    updateWorldBounds();
-                    addToRecent(project(finalName, path, gDate(), canvasWidth, canvasHeight, activeComps));
-                    saveProjectToFile(path);
+                    updateWorldBounds ();
+                    addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
+                    saveProjectToFile (path);
                     currentProjectPath = path;
                     if (txtProjectName)
                         txtProjectName->setActive(false);
-                    fitWindowToCanvas();
+                    fitWindowToCanvas ();
                     SDL_SetWindowMinimumSize(window, 400, 300);
                     SDL_SetWindowMaximumSize(window, 0, 0);
-                    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+                    SDL_SetWindowPosition (window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
                     resetLibExpanded();
                     resetView();
                     selLibItm = "";
-                    currentTool = Tool::SELECT;
+                    currentTool =Tool::SELECT;
                     SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
                     currentState = app::WORKSPACE;
                     cout << "New project created: " << finalName <<" Canvas: " << canvasWidth << "x" << canvasHeight << endl;
                 }
-                else if (btnNameCancel && btnNameCancel->click(adjEv)) {
+                else if(btnNameCancel && btnNameCancel->click(adjEv)) {
                     if (txtProjectName)
                         txtProjectName->setActive(false);
                     currentState = app::STARTUP_MENU;
                 }
             }
-            else if (currentState == app::WORKSPACE) {
+            else if (currentState == app::WORKSPACE){
                 updateViewport();
 
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F5) {
-                    startSimulation();
+                    startSim();
                 }
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F6) {
-                    pauseSimulation();
+                    pauseSim();
                 }
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F7) {
-                    stopSimulation();
+                    stopSim();
                 }
                 mouseHandled = false;
 
                 btnBack->events(ev);
-                if (btnBack->click(ev)) {
-                    stopSimulation();
+                if (btnBack->click(ev) ) {
+                    stopSim();
                     currentState = app::STARTUP_MENU;
-                    SDL_SetWindowMinimumSize(window, 0, 0);
-                    SDL_SetWindowMaximumSize(window, 0, 0);
+                    SDL_SetWindowMinimumSize ( window, 0, 0);
+                    SDL_SetWindowMaximumSize ( window, 0, 0);
                     selLibItm = "";
                     currentTool = Tool::SELECT;
                     wireStartActive = false;
                     selectedIndices. clear();
-                    mouseHandled = true;
+                    mouseHandled =true;
                 }
 
                 for (auto b : tlbrBtns) b->events(ev);
@@ -4528,15 +4530,15 @@ public:
                 btnStop->events(ev);
 
                 if (!mouseHandled && btnRun->click(ev)) {
-                    startSimulation();
+                    startSim();
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && btnPause->click(ev)) {
-                    pauseSimulation();
+                    pauseSim();
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && btnStop->click(ev)) {
-                    stopSimulation();
+                    stopSim();
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && tlbrBtns[0]-> click(ev)) {
@@ -4545,24 +4547,24 @@ public:
                     mouseHandled = true;
                     cout << "Select tool\n";
                 }
-                else if (!mouseHandled && tlbrBtns[1]->click(ev)) {
-                    if (currentTool == Tool::WIRE) {
+                else if(!mouseHandled && tlbrBtns[1]->click(ev)) {
+                    if (currentTool == Tool::WIRE){
                         currentTool = Tool ::SELECT;
                         wireStartActive = false;
                     }
                     else {
                         currentTool = Tool::WIRE;
-                        selLibItm = "";
+                        selLibItm = "" ;
                         wireStartActive = false;
                     }
                     mouseHandled = true;
                     cout << "Wire tool\n";
                 }
-                else if (!mouseHandled && tlbrBtns[2]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns[2]->click(ev)){
                     showLib = !showLib;
                     if (showLib) {
-                        currentTool = Tool::COMPONENT;
-                        searchBox->setTxt("Search...");
+                        currentTool =Tool::COMPONENT;
+                        searchBox->setTxt ("Search...");
                         searchFilter = "";
                     }
                     else {
@@ -4570,28 +4572,28 @@ public:
                         selLibItm = "";
                     }
                     wireStartActive = false;
-                    updateViewport();
+                    updateViewport() ;
                     mouseHandled = true;
                     cout<< "Component Library toggled\n";
                 }
-                else if (!mouseHandled && tlbrBtns [3]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns [3]->click(ev)){
                     if (!currentProjectPath.empty()) {
-                        saveProjectToFile(currentProjectPath);
-                        addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
+                        saveProjectToFile (currentProjectPath);
+                        addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
                         cout << "Project saved.\n";
                     }
                     selLibItm = "";
                     mouseHandled = true;
                 }
-                else if (!mouseHandled && tlbrBtns[4]->click(ev)) {
+                else if(!mouseHandled && tlbrBtns[4]->click(ev)) {
                     string chosen = fileDialog();
-                    if (!chosen.empty()) {
+                    if (!chosen.empty ()) {
                         if (loadProjectFromFile(chosen)) {
                             currentProjectPath = chosen;
                             fitWindowToCanvas();
                             resetLibExpanded();
                             resetView();
-                            selLibItm = "";
+                            selLibItm = "" ;
                             currentTool = Tool::SELECT;
                             wireStartActive = false;
                             SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
@@ -4600,9 +4602,9 @@ public:
                         }
                     }
                     selLibItm = "";
-                    mouseHandled = true;
+                    mouseHandled =true;
                 }
-                else if (!mouseHandled && tlbrBtns[5]->click(ev)) {
+                else if (!mouseHandled && tlbrBtns[5]->click (ev)) {
                     undo();
                     mouseHandled = true;
                     cout << "Undo\n";
@@ -4614,10 +4616,10 @@ public:
                 }
 
                 if (showLib) {
-                    bool propsActive = (propLabelInput && propLabelInput->isActive()) || (propValueInput && propValueInput->isActive());
-                    if (!propsActive) {
+                    bool propsActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive());
+                    if (!propsActive){
                         searchBox->handleEvent(ev);
-                        if (searchBox->isActive())
+                        if(searchBox->isActive())
                             searchFilter = searchBox->gTxt();
                         if (!searchBox->isActive() && searchBox->gTxt().empty())
                             searchBox->setTxt("Search...");
@@ -4625,27 +4627,27 @@ public:
                 }
 
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_l && SDL_GetModState() & KMOD_CTRL) {
-                    showLib = !showLib;
+                    showLib = !showLib ;
                     if (showLib) {
                         currentTool = Tool::COMPONENT;
                         searchBox->setTxt("Search...");
                         searchFilter = "";
                     } else {
-                        currentTool = Tool::SELECT;
+                        currentTool = Tool::SELECT ;
                         selLibItm = "";
                     }
                     updateViewport();
                 }
 
-                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT && !mouseHandled) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_LEFT && !mouseHandled) {
                     bool canvasClickHandled = false;
                     bool ctrlHeld = SDL_GetModState() &KMOD_CTRL;
                     if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
-                        if (searchBox->gTxt() == "Search...")
+                        if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
                         if (propLabelInput) propLabelInput->setActive(false);
-                        if (propValueInput) propValueInput->setActive(false);
+                        if (propValueInput ) propValueInput->setActive(false);
                         canvasClickHandled = true;
                     }
                     else {
@@ -4659,19 +4661,19 @@ public:
                     if (!canvasClickHandled && showLib && activeCompsY > 0 && mseX >= 0 && mseX< pnlLW &&
                         mseY >= activeCompsY && mseY < activeCompsY + (int)activeComps.size() * 26) {
                         int index = (mseY- activeCompsY) / 26;
-                        if (index >= 0 && index <(int)activeComps.size()) {
+                        if (index >= 0 && index <(int)activeComps.size()){
                             SDL_Rect r = {5, activeCompsY + index * 26, pnlLW - 10, 20};
                             SDL_Rect xRect = {r.x + r.w - 15, r.y + (r.h - 10)/2, 10, 10};
                             if (mseX >= xRect.x && mseX <= xRect.x + xRect.w && mseY >= xRect. y && mseY <= xRect.y + xRect.h) {
                                 UndoAction act;
                                 act.type = ACTIVE_REMOVE;
                                 act.compName = activeComps[index];
-                                act.activeIndex = index;
+                                act.activeIndex = index ;
                                 pushUndo(act);
                                 activeComps.erase(activeComps.begin() + index);
                                 canvasClickHandled = true;
                             }
-                            else if (mseX >= r.x && mseX <= r.x + r.w && mseY >= r.y && mseY <= r.y + r.h) {
+                            else if (mseX >= r.x && mseX<= r.x + r.w &&mseY >= r.y && mseY <= r.y + r.h) {
                                 selLibItm = activeComps [index];
                                 currentTool = Tool:: COMPONENT;
                                 canvasClickHandled = true;
@@ -4679,14 +4681,14 @@ public:
                         }
                     }
 
-                    if (!canvasClickHandled && showLib && mseX >= 0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
-                        string lowerFilter = toLower(searchFilter);
+                    if (!canvasClickHandled && showLib && mseX>=0 && mseX < pnlLW && mseY >= tlbrH && mseY < winH - statH) {
+                        string lowerFilter = toLower (searchFilter);
                         int yOff = tlbrH +45;
                         bool clickedOnComponent = false;
                         for (auto& cat : libCategories) {
                             yOff += 30;
                             bool showComponents = cat.expanded || !searchFilter.empty();
-                            if (showComponents) {
+                            if(showComponents){
                                 for (auto& comp : cat.components) {
                                     if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos || toLower(comp).find(lowerFilter) != string::npos) {
                                         SDL_Rect compRect = {15, yOff, pnlLW-20, 20};
@@ -4694,16 +4696,16 @@ public:
                                             selLibItm = comp;
                                             currentTool = Tool::COMPONENT;
                                             if (ev.button.clicks == 2) {
-                                                if (find(activeComps.begin(), activeComps.end(), comp) == activeComps.end()) {
+                                                if (find(activeComps.begin(), activeComps.end(),comp)== activeComps.end()) {
                                                     UndoAction act;
                                                     act.type = ACTIVE_ADD;
                                                     act.compName = comp;
-                                                    pushUndo(act);
-                                                    activeComps.push_back(comp);
+                                                    pushUndo (act);
+                                                    activeComps.push_back (comp);
                                                 }
                                             }
                                             clickedOnComponent = true;
-                                            canvasClickHandled = true;
+                                            canvasClickHandled= true;
                                             break;
                                         }
                                         yOff += 28;
@@ -4726,7 +4728,7 @@ public:
                                 bool showComponents = cat.expanded || !searchFilter.empty();
                                 if (showComponents) {
                                     for (auto& comp: cat.components) {
-                                        if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos ||
+                                        if (searchFilter.empty() ||toLower (cat.name).find(lowerFilter) != string::npos ||
                                             toLower(comp).find(lowerFilter) != string::npos) {
                                             yOff += 28;
                                         }
@@ -4736,20 +4738,20 @@ public:
                             }
                         }
                     }
-                    else if (!canvasClickHandled && mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
-                        mseY >= zoomRct.y && mseY <= zoomRct.y + zoomRct.h) {
-                        resetView();
+                    else if ( !canvasClickHandled && mseX >= zoomRct.x && mseX <= zoomRct.x + zoomRct.w &&
+                        mseY >= zoomRct.y && mseY<=zoomRct.y + zoomRct.h){
+                        resetView ();
                         selLibItm = "";
                         canvasClickHandled = true;
                     }
                     else if (!canvasClickHandled && mseX >= vpX && mseX < vpX +vpW && mseY >= vpY && mseY < vpY+ vpH) {
-                        if (propLabelInput) propLabelInput->setActive(false);
-                        if (propValueInput) propValueInput->setActive(false);
-                        if (!btnBack-> click(ev)) {
-                            if (ctrlHeld) {
+                        if (propLabelInput) propLabelInput->setActive (false);
+                        if (propValueInput) propValueInput->setActive (false);
+                        if (!btnBack-> click (ev)) {
+                            if (ctrlHeld){
                                 drawingSelection = false;
-                                isPan = true;
-                                panStartX = ev.button.x; panStartY = ev.button.y;
+                                isPan = true ;
+                                panStartX = ev.button.x ; panStartY = ev.button.y;
                                 panOffXst = panX; panOffYst = panY;
                             }
                             else if (currentTool == Tool::WIRE) {
@@ -4781,53 +4783,53 @@ public:
                                     UndoAction act;
                                     act.type = WIRE_ADD;
                                     act.wiresBefore = wires;
-                                    act.junctionsBefore = junctions;
+                                    act.junctionsBefore= junctions;
                                     wires.push_back(path);
                                     act.wiresAfter = wires;
-                                    act.junctionsAfter = junctions;
+                                    act.junctionsAfter= junctions;
                                     pushUndo(act);
                                     wireStartActive = false;
                                 }
                                 canvasClickHandled = true;
                             }
-                            else if (currentTool == Tool::COMPONENT && !selLibItm.empty()) {
+                            else if (currentTool == Tool::COMPONENT && !selLibItm.empty()){
                                 int wx = snapToGrid(scrToWldX(mseX));
                                 int wy = snapToGrid(scrToWldY(mseY));
-                                clampToCanvas(wx, wy);
-                                placedComp pc = {selLibItm, wx, wy, 0, false, false, "", ""};
-                                initializeComponent(pc);
+                                clampToCanvas (wx, wy);
+                                placedComp pc ={selLibItm, wx, wy, 0, false, false, "", ""} ;
+                                initComponent(pc);
                                 UndoAction act;
                                 act.type = COMP_PLACE;
-                                act.comp = pc;
+                                act.comp = pc ;
                                 act.wiresBefore = wires;
                                 act.junctionsBefore = junctions;
-                                placedComponents.push_back(pc);
+                                placedComponents.push_back (pc);
                                 act.wiresAfter = wires;
                                 act.junctionsAfter = junctions;
                                 pushUndo(act);
                             } else {
-                                bool hitComponent = false;
+                                bool hitComponent =false;
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
-                                    if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))) {
-                                        initializeComponent(placedComponents[i]);
+                                    if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY)) ) {
+                                        initComponent(placedComponents[i]);
                                         if (placedComponents[i].name == "Keypad 4x4" && !(SDL_GetModState() & KMOD_ALT)) {
-                                            SDL_Point local = worldToComponentLocal(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY));
+                                            SDL_Point local = toComponentLocal(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY));
                                             if (local.x >= -32 && local.x < 32 && local.y >= -32 && local.y < 32) {
                                                 int column = (local.x + 32) / 16;
-                                                int row = (local.y + 32) / 16;
-                                                keypadModels[placedComponents[i].id].press(row, column);
+                                                int rowIndexValue = (local.y + 32) / 16;
+                                                keypadData[placedComponents[i].id].pressMatrixKey(rowIndexValue, column);
                                             }
                                             selectedIndices.clear(); selectedIndices.push_back(i);
                                             hitComponent = true;
                                             break;
                                         }
                                         if (placedComponents[i].name == "Microcontroller" && ev.button.clicks >= 2 && !(SDL_GetModState() & KMOD_ALT)) {
-                                            string firmwarePath = firmwareFileDialog();
-                                            if (!firmwarePath.empty()) {
-                                                int clockHz = parseNamedInteger(placedComponents[i].value, "clock", 100);
-                                                placedComponents[i].value = "firmware=" + firmwarePath + ";clock=" + to_string(clockHz);
-                                                attemptedFirmwarePaths.erase(placedComponents[i].id);
-                                                cout << "Firmware selected: " << firmwarePath << "\n";
+                                            string firmwareFileName = selectHexFile();
+                                            if (!firmwareFileName.empty()) {
+                                                int getCpuClock = namedInteger(placedComponents[i].value, "clock", 100);
+                                                placedComponents[i].value = "firmware=" + firmwareFileName + ";clock=" + to_string(getCpuClock);
+                                                checkedFirmwarePaths.erase(placedComponents[i].id);
+                                                cout << "Firmware selected: " << firmwareFileName << "\n";
                                             }
                                             selectedIndices.clear(); selectedIndices.push_back(i);
                                             hitComponent = true;
@@ -4835,14 +4837,14 @@ public:
                                             break;
                                         }
                                         if (placedComponents[i].name == "Push Button" && !(SDL_GetModState() & KMOD_ALT)) {
-                                            componentRuntime[placedComponents[i].id].pressed = true;
+                                            runtimeData[placedComponents[i].id].isPressed = true;
                                             selectedIndices.clear(); selectedIndices.push_back(i);
                                             hitComponent = true;
                                             break;
                                         }
                                         if (placedComponents[i].name == "Switch" && ev.button.clicks >= 2 && !(SDL_GetModState() & KMOD_ALT)) {
-                                            placedComponents[i].switchState = !placedComponents[i].switchState;
-                                            placedComponents[i].value = placedComponents[i].switchState ? "CLOSED" : "OPEN";
+                                            placedComponents[i].switchClosed = !placedComponents[i].switchClosed;
+                                            placedComponents[i].value = placedComponents[i].switchClosed ? "CLOSED" : "OPEN";
                                             selectedIndices.clear(); selectedIndices.push_back(i);
                                             hitComponent = true;
                                             lastClickedIndex = -1; lastClickTime = 0;
@@ -4852,53 +4854,53 @@ public:
                                         if (lastClickedIndex == i && (now - lastClickTime) < 400) {
                                             editingIndex = i;
                                             showProp = true;
-                                            if (!propLabelInput) {
+                                            if (!propLabelInput){
                                                 propLabelInput = new txtIn(renderer, font, 0, 0, 100, 25, false);
-                                                propValueInput = new txtIn(renderer, font, 0, 0, 100, 25, false);
-                                                btnPropOK = new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255, 255, 255, 255}, {240, 240, 240, 255}, "Apply");
-                                                btnPropCancel = new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255, 255, 255, 255}, {240, 240, 240, 255}, "Cancel");
+                                                propValueInput = new txtIn (renderer, font, 0, 0, 100, 25, false);
+                                                btnPropOK = new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255,255,255,255}, {240,240,240,255}, "Apply");
+                                                btnPropCancel = new BUTTONS(renderer, libFont, 0, 0, 60, 20, {255,255,255,255}, {240,240,240,255}, "Cancel");
                                             }
                                             propLabelInput->setTxt(placedComponents[i].label);
                                             propValueInput-> setTxt(placedComponents[i].value);
                                             propLabelInput->setActive(true);
                                             propValueInput->setActive(false);
-                                            if (searchBox && searchBox->isActive()) {
+                                            if (searchBox && searchBox->isActive()){
                                                 searchBox->setActive(false);
-                                                searchBox->setTxt("Search...");
+                                                searchBox->setTxt ("Search...");
                                             }
                                             selectedIndices.clear();
-                                            selectedIndices.push_back(i);
+                                            selectedIndices.push_back (i);
                                             lastClickedIndex = -1;
                                             lastClickTime = 0;
                                             hitComponent = true;
                                             break;
                                         }
-                                        lastClickedIndex = i;
+                                        lastClickedIndex =i;
                                         lastClickTime = now;
-                                        bool alreadySelected = find(selectedIndices.begin(), selectedIndices.end(), i) != selectedIndices.end();
-                                        if (SDL_GetModState() & KMOD_SHIFT) {
-                                            auto it = find(selectedIndices.begin(), selectedIndices.end(), i);
+                                        bool alreadySelected = find(selectedIndices.begin(),selectedIndices.end(),i) != selectedIndices.end();
+                                        if (SDL_GetModState() & KMOD_SHIFT){
+                                            auto it = find (selectedIndices.begin(), selectedIndices.end(), i);
                                             if (it != selectedIndices.end()) {
                                                 selectedIndices.erase(it);
-                                                hitComponent = true;
+                                                hitComponent = true ;
                                                 break;
                                             }
                                             else {
                                                 selectedIndices.push_back(i);
-                                                alreadySelected = true;
+                                                alreadySelected =true;
                                             }
                                         }
                                         else {
-                                            if (!alreadySelected) {
-                                                selectedIndices.clear();
+                                            if (!alreadySelected){
+                                                selectedIndices.clear ();
                                                 selectedIndices.push_back(i);
                                                 alreadySelected = true;
                                             }
                                         }
                                         if (alreadySelected) {
                                             draggingComponents = true;
-                                            dragStartX = mseX;
-                                            dragStartY = mseY;
+                                            dragStartX =mseX;
+                                            dragStartY =mseY;
                                             preDragComponents = placedComponents;
                                             preDragWires = wires;
                                             dragSnapshots.clear();
@@ -4907,39 +4909,39 @@ public:
                                             }
                                         }
                                         hitComponent = true;
-                                        break;
+                                        break ;
                                     }
                                 }
-                                if (!hitComponent) {
+                                if (!hitComponent){
                                     if (!(SDL_GetModState() & KMOD_SHIFT)) {
-                                        selectedIndices.clear();
+                                        selectedIndices.clear() ;
                                     }
-                                    bool junctionToggled = false;
+                                    bool junctionToggled= false;
                                     if (currentTool == Tool::SELECT) {
-                                        int wx = scrToWldX(mseX);
-                                        int wy = scrToWldY(mseY);
-                                        for (size_t i = 0; i < wires.size(); ++i) {
+                                        int wx = scrToWldX (mseX);
+                                        int wy = scrToWldY (mseY);
+                                        for (size_t i = 0; i < wires.size(); ++i){
                                             for (size_t j = i+1; j < wires.size(); ++j) {
                                                 for (size_t s1 = 0; s1+1 < wires[i] .size(); ++s1) {
-                                                    for (size_t s2 = 0; s2+1 < wires[j].size(); ++s2) {
+                                                    for (size_t s2 = 0; s2+1 < wires[j].size(); ++s2){
                                                         SDL_Point inter;
                                                         if (segmentsIntersect(wires[i][s1], wires[i] [s1+1], wires[j][s2], wires[j][s2+1], inter)) {
-                                                            if (pointNear({wx, wy}, inter, 8)) {
+                                                            if (pointNear({wx, wy}, inter, 8 )) {
                                                                 bool exists = false;
                                                                 for (auto& jpt: junctions) {
-                                                                    if (pointNear(jpt, inter, 6)) { exists = true; break; }
+                                                                    if (pointNear(jpt, inter, 6)) { exists = true ; break; }
                                                                 }
-                                                                if (!exists) {
+                                                                if(!exists) {
                                                                     UndoAction act;
                                                                     act.type = WIRE_JUNCTION_ADD;
-                                                                    act.junctionsBefore = junctions;
+                                                                    act.junctionsBefore= junctions;
                                                                     junctions.push_back(inter);
                                                                     act.junctionsAfter = junctions;
                                                                     pushUndo(act);
                                                                 }
                                                                 else {
                                                                     for (auto it = junctions.begin(); it != junctions.end(); ++it) {
-                                                                        if (pointNear(*it, inter, 6)) {
+                                                                        if (pointNear(*it, inter, 6)){
                                                                             UndoAction act;
                                                                             act.type = WIRE_JUNCTION_REMOVE;
                                                                             act. junctionsBefore = junctions;
@@ -4947,12 +4949,12 @@ public:
                                                                             junctions.erase(it);
                                                                             act.junctionsAfter = junctions;
                                                                             pushUndo(act);
-                                                                            break;
+                                                                            break ;
                                                                         }
                                                                     }
                                                                 }
                                                                 junctionToggled = true;
-                                                                goto junction_done;
+                                                                goto junction_done ;
                                                             }
                                                         }
                                                     }
@@ -4961,27 +4963,27 @@ public:
                                         }
                                         junction_done:;
                                     }
-                                    if (!junctionToggled) {
+                                    if (!junctionToggled){
                                         drawingSelection = true;
-                                        selectionRect = {mseX, mseY, 0, 0};
+                                        selectionRect ={mseX, mseY, 0, 0} ;
                                         lastClickedIndex = -1;
                                         lastClickTime = 0;
                                     }
                                 }
                             }
                         }
-                        selLibItm = "";
-                        canvasClickHandled = true;
+                        selLibItm ="";
+                        canvasClickHandled = true ;
                     }
-                    else if (!canvasClickHandled && showProp && editingIndex < placedComponents.size()) {
-                        if (propLabelInput && propLabelInput->mouseIn(mseX, mseY)) {
-                            propLabelInput->setActive(true);
+                    else if (!canvasClickHandled && showProp &&editingIndex < placedComponents.size()) {
+                        if (propLabelInput && propLabelInput->mouseIn(mseX, mseY) ) {
+                            propLabelInput->setActive (true);
                             propValueInput->setActive(false);
                             if (searchBox && searchBox->isActive()) {
                                 searchBox->setActive(false);
-                                searchBox->setTxt("Search...");
+                                searchBox->setTxt( "Search...");
                             }
-                            canvasClickHandled = true;
+                            canvasClickHandled = true ;
                         }
                         else if (propValueInput && propValueInput->mouseIn(mseX, mseY)) {
                             propValueInput-> setActive(true);
@@ -4996,30 +4998,30 @@ public:
                             if (propLabelInput) propLabelInput->setActive(false);
                             if (propValueInput) propValueInput->setActive(false);
                         }
-                        if (!canvasClickHandled && btnPropOK && btnPropOK->click(ev)) {
+                        if (!canvasClickHandled && btnPropOK && btnPropOK->click(ev)){
                             if (editingIndex <placedComponents.size()) {
                                 UndoAction act;
-                                act.type = COMP_EDIT;
+                                act.type =COMP_EDIT;
                                 act.oldComp = placedComponents [editingIndex];
                                 placedComponents[editingIndex].label = propLabelInput->gTxt();
                                 placedComponents[editingIndex].value = propValueInput->gTxt();
-                                applyComponentConfig(placedComponents[editingIndex]);
+                                applyComponentSettings(placedComponents[editingIndex]);
                                 act.comp = placedComponents[editingIndex];
-                                pushUndo(act);
+                                pushUndo (act);
                             }
                             editingIndex = -1;
                             showProp = false;
                             updateViewport();
                             if (propLabelInput) propLabelInput->setActive(false);
                             if (propValueInput) propValueInput->setActive(false);
-                            canvasClickHandled = true;
+                            canvasClickHandled = true ;
                         }
-                        else if (!canvasClickHandled && btnPropCancel && btnPropCancel->click(ev)) {
+                        else if (!canvasClickHandled && btnPropCancel && btnPropCancel->click(ev) ) {
                             editingIndex = -1;
                             showProp = false;
-                            updateViewport();
-                            if (propLabelInput) propLabelInput->setActive(false);
-                            if (propValueInput) propValueInput->setActive(false);
+                            updateViewport ();
+                            if (propLabelInput) propLabelInput->setActive (false);
+                            if (propValueInput) propValueInput->setActive (false);
                             canvasClickHandled = true;
                         }
                     }
@@ -5027,12 +5029,12 @@ public:
                 else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_MIDDLE) {
                     if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+ vpH) {
                         drawingSelection = false;
-                        isPan = true;
-                        panStartX = ev.button.x; panStartY = ev.button.y;
+                        isPan = true ;
+                        panStartX = ev.button.x ; panStartY = ev.button.y;
                         panOffXst = panX; panOffYst = panY;
                     }
                 }
-                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_RIGHT) {
+                if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_RIGHT) {
                     if (mseX >= vpX && mseX < vpX + vpW && mseY >= vpY && mseY < vpY +vpH) {
                         bool removedWire = false;
                         for (size_t wi = 0; wi < wires.size(); ++wi) {
@@ -5045,10 +5047,10 @@ public:
                                     UndoAction act;
                                     act.type = WIRE_DELETE;
                                     act.wiresBefore = wires;
-                                    act.junctionsBefore = junctions;
+                                    act.junctionsBefore = junctions ;
                                     vector<SDL_Point> removedWireData = wires[wi];
                                     wires.erase(wires.begin() + wi);
-                                    removeJunctionsOnWire(removedWireData);
+                                    removeJunctionsOnWire (removedWireData);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter = junctions;
                                     pushUndo(act);
@@ -5060,18 +5062,18 @@ public:
                         }
                         if (!removedWire) {
                             for (size_t i = 0; i < placedComponents.size(); ++i) {
-                                if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))) {
+                                if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))){
                                     UndoAction act;
                                     act.type = COMP_DELETE;
                                     act.comp = placedComponents[i];
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions;
                                     pushUndo(act);
-                                    placedComponents.erase(placedComponents.begin() + i);
+                                    placedComponents.erase (placedComponents.begin() + i);
                                     act.wiresAfter = wires;
-                                    act.junctionsAfter = junctions;
+                                    act.junctionsAfter =junctions;
                                     selectedIndices.clear();
-                                    if (editingIndex == i) editingIndex = -1;
+                                    if (editingIndex == i) editingIndex= -1;
                                     break;
                                 }
                             }
@@ -5080,14 +5082,14 @@ public:
                 }
 
                 if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_LEFT) {
-                    for (auto& runtimeItem : componentRuntime) runtimeItem.second.pressed = false;
-                    for (auto& keypadItem : keypadModels) keypadItem.second.release();
-                    if (draggingComponents) {
-                        if (dragStartX != mseX || dragStartY != mseY) {
-                            updateWiresForMovingComp();
+                    for (auto& runtimeItem : runtimeData) runtimeItem.second.isPressed = false;
+                    for (auto& keypadItem : keypadData) keypadItem.second.releaseMatrixKey();
+                    if (draggingComponents){
+                        if (dragStartX != mseX ||dragStartY != mseY){
+                            updateWiresForMovingComp () ;
                             UndoAction act;
                             act.type = COMP_MOVE;
-                            act.compsBefore = preDragComponents;
+                            act.compsBefore= preDragComponents;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = preDragWires;
                             act.wiresAfter = wires;
@@ -5095,27 +5097,27 @@ public:
                         }
                         draggingComponents = false;
                     }
-                    if (drawingSelection) {
+                    if (drawingSelection){
                         drawingSelection = false;
-                        if (selectionRect.w > 0 && selectionRect.h > 0) {
-                            SDL_Rect sr = selectionRect;
-                            for (size_t i = 0; i < placedComponents.size(); ++i) {
+                        if (selectionRect.w > 0 &&selectionRect.h > 0) {
+                            SDL_Rect sr= selectionRect;
+                            for (size_t i = 0; i < placedComponents.size(); ++i){
                                 int sx = wldToScrX(placedComponents[i].x);
                                 int sy = wldToScrY(placedComponents[i].y);
-                                if (sx >= sr.x && sx <= sr.x + sr.w && sy >= sr.y && sy <= sr.y + sr.h) {
+                                if (sx >= sr.x && sx <= sr.x + sr.w && sy >= sr.y && sy<= sr.y + sr.h) {
                                     if (find(selectedIndices.begin(), selectedIndices.end(), i) == selectedIndices.end())
                                         selectedIndices.push_back(i);
                                 }
                             }
                         }
-                        selectionRect = {0, 0, 0, 0};
+                        selectionRect = {0,0,0,0};
                     }
-                    isPan = false;
+                    isPan =false;
                 }
-                else if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_MIDDLE) {
+                else if (ev.type == SDL_MOUSEBUTTONUP && ev.button.button == SDL_BUTTON_MIDDLE){
                     if (isPan) isPan = false;
                 }
-                if (isPan && ev.type == SDL_MOUSEMOTION) {
+                if (isPan && ev.type== SDL_MOUSEMOTION) {
                     panX = panOffXst + (ev.motion.x- panStartX);
                     panY = panOffYst + (ev.motion.y- panStartY);
                 }
@@ -5156,10 +5158,10 @@ public:
                             }
                             wire = calcOrthoPath(start, end);
                         }
-                    } else if (drawingSelection) {
+                    } else if (drawingSelection){
                         int x = min(mseX, selectionRect.x);
                         int y = min(mseY, selectionRect.y);
-                        int w = abs(mseX - selectionRect.x);
+                        int w = abs(mseX - selectionRect.x) ;
                         int h = abs(mseY - selectionRect.y);
                         selectionRect = {x, y, w, h};
                     }
@@ -5184,13 +5186,13 @@ public:
                         if (bestDist >= 100) hoveredPinActive = false;
                     }
                 }
-                if (ev.type == SDL_MOUSEWHEEL && mseX >= vpX && mseX<vpX+vpW && mseY >= vpY && mseY<vpY+vpH) {
+                if (ev.type == SDL_MOUSEWHEEL && mseX>=vpX && mseX<vpX+vpW && mseY >=vpY && mseY<vpY+vpH){
                     int mx = mseX, my = mseY;
-                    float oldZm = zmLvl;
+                    float oldZm =zmLvl;
                     if (ev.wheel.y >0)
                         zmLvl *= 1.1f;
                     else if (ev.wheel.y < 0)
-                        zmLvl /= 1.1f;
+                        zmLvl /= 1.1f ;
                     if (zmLvl< 0.2f)
                         zmLvl = 0.2f;
                     if (zmLvl > 5.0f)
@@ -5199,7 +5201,7 @@ public:
                     panY = (my - vpY) - (int)(((my - vpY) - panY) *(zmLvl / oldZm));
                 }
 
-                if (showProp && editingIndex < placedComponents.size()) {
+                if (showProp && editingIndex < placedComponents.size( )) {
                     propLabelInput->handleEvent(ev);
                     propValueInput->handleEvent(ev);
                     btnPropOK->events(ev);
@@ -5207,28 +5209,28 @@ public:
                 }
 
                 if (ev.type == SDL_KEYDOWN) {
-                    bool textFieldActive = (propLabelInput && propLabelInput->isActive()) || (propValueInput && propValueInput->isActive()) || (searchBox && searchBox->isActive());
+                    bool textFieldActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive()) ||(searchBox && searchBox->isActive());
 
                     if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { undo();}
                     else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { redo(); }
                     else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL)) {
                         if (!currentProjectPath.empty()) {
-                            saveProjectToFile(currentProjectPath);
+                            saveProjectToFile(currentProjectPath) ;
                             addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
                             cout << "Project saved (Ctrl+S).\n";
                         }
-                        selLibItm = "";
+                        selLibItm = "" ;
                     }
                     else if (ev.key.keysym.sym == SDLK_o && (SDL_GetModState() & KMOD_CTRL)) {
                         string chosen = fileDialog();
                         if (!chosen.empty()) {
                             if (loadProjectFromFile(chosen)) {
                                 currentProjectPath = chosen;
-                                fitWindowToCanvas();
-                                resetLibExpanded();
+                                fitWindowToCanvas() ;
+                                resetLibExpanded ();
                                 resetView();
                                 selLibItm = "";
-                                currentTool = Tool::SELECT;
+                                currentTool =Tool::SELECT;
                                 SDL_FlushEvent(SDL_MOUSEBUTTONDOWN);
                                 currentState = app::WORKSPACE;
                                 cout << "Loaded: " << chosen << endl;
@@ -5236,8 +5238,8 @@ public:
                         }
                         selLibItm = "";
                     }
-                    else if (ev.key.keysym.sym == SDLK_0 && (SDL_GetModState() & KMOD_CTRL)) {
-                        resetView();
+                    else if (ev.key.keysym.sym == SDLK_0 && (SDL_GetModState() & KMOD_CTRL)){
+                        resetView ();
                         selLibItm = "";
                     }
                     else if (!textFieldActive) {
@@ -5252,18 +5254,18 @@ public:
                             selLibItm = "";
                         }
                         else if (ev.key.keysym.sym == SDLK_3) {
-                            showLib = true;
+                            showLib =true;
                             currentTool = Tool::COMPONENT;
                             searchBox->setTxt("Search...");
                             searchFilter = "";
                             cout <<"Component Library (keyboard)\n";
                         }
                         else if (ev.key.keysym.sym == SDLK_4) {
-                            showProp = !showProp;
+                            showProp =!showProp;
                             cout << "Properties panel toggled\n";
                         }
                         else if (ev.key.keysym.sym == SDLK_DELETE) {
-                            for (auto it = selectedIndices.rbegin(); it != selectedIndices.rend(); ++it) {
+                            for (auto it = selectedIndices.rbegin(); it != selectedIndices.rend() ; ++it) {
                                 size_t i = *it;
                                 if (i < placedComponents.size()) {
                                     UndoAction act;
@@ -5274,31 +5276,31 @@ public:
                                     pushUndo(act);
                                     placedComponents.erase(placedComponents.begin() + i);
                                     act.wiresAfter = wires;
-                                    act.junctionsAfter = junctions;
+                                    act.junctionsAfter = junctions ;
                                     if (editingIndex == i) editingIndex = -1;
                                 }
                             }
                             selectedIndices.clear();
                         }
-                        else if (ev.key.keysym.sym == SDLK_r) {
+                        else if(ev.key.keysym.sym == SDLK_r) {
                             vector<placedComp>before = placedComponents;
                             auto wiresBeforeRotate = wires;
-                            auto junctionsBeforeRotate = junctions;
-                            for (size_t idx : selectedIndices) {
+                            auto junctionsBeforeRotate = junctions ;
+                            for (size_t idx : selectedIndices){
                                 placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
                             }
                             updateWiresForTransform(before, placedComponents);
                             UndoAction act;
-                            act.type = COMP_TRANSFORM;
+                            act.type = COMP_TRANSFORM ;
                             act.compsBefore = before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeRotate;
                             act.wiresAfter = wires;
-                            act.junctionsBefore = junctionsBeforeRotate;
+                            act.junctionsBefore= junctionsBeforeRotate;
                             act.junctionsAfter = junctions;
                             pushUndo(act);
                         }
-                        else if (ev.key.keysym.sym == SDLK_h) {
+                        else if (ev.key.keysym.sym== SDLK_h){
                             vector <placedComp> before = placedComponents;
                             auto wiresBeforeFlip = wires;
                             auto junctionsBeforeFlip = junctions;
@@ -5307,16 +5309,16 @@ public:
                             }
                             updateWiresForTransform(before, placedComponents);
                             UndoAction act;
-                            act.type = COMP_TRANSFORM;
+                            act.type =COMP_TRANSFORM;
                             act.compsBefore = before;
-                            act.compsAfter = placedComponents;
+                            act.compsAfter =placedComponents;
                             act.wiresBefore = wiresBeforeFlip;
                             act.wiresAfter = wires;
-                            act.junctionsBefore = junctionsBeforeFlip;
+                            act.junctionsBefore= junctionsBeforeFlip;
                             act.junctionsAfter = junctions;
                             pushUndo(act);
                         }
-                        else if (ev.key.keysym.sym == SDLK_v) {
+                        else if(ev.key.keysym.sym == SDLK_v) {
                             vector<placedComp> before = placedComponents;
                             auto wiresBeforeFlipV = wires;
                             auto junctionsBeforeFlipV = junctions;
@@ -5326,7 +5328,7 @@ public:
                             updateWiresForTransform(before, placedComponents);
                             UndoAction act;
                             act.type = COMP_TRANSFORM;
-                            act.compsBefore = before;
+                            act.compsBefore= before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeFlipV;
                             act.wiresAfter = wires;
@@ -5334,25 +5336,25 @@ public:
                             act.junctionsAfter = junctions;
                             pushUndo(act);
                         }
-                        else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym == SDLK_KP_PLUS) {
-                            float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl = 5.0f;
-                            int cx = vpW/2, cy = vpH/2;
+                        else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym == SDLK_KP_PLUS){
+                            float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
+                            int cx = vpW/2 ,cy = vpH/2;
                             panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
                             panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
                         }
-                        else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS) {
-                            float oldZm = zmLvl; zmLvl /= 1.1f;
+                        else if (ev.key.keysym.sym == SDLK_MINUS || ev.key.keysym.sym == SDLK_KP_MINUS){
+                            float oldZm = zmLvl; zmLvl/= 1.1f;
                             if (zmLvl < 0.2f)
                                 zmLvl = 0.2f;
-                            int cx = vpW/2, cy = vpH/2;
+                            int cx = vpW/2 , cy = vpH/2;
                             panX = cx - (int) ((cx - panX) * (zmLvl / oldZm));
                             panY = cy - (int) ((cy - panY) * (zmLvl / oldZm));
                         }
-                        else if (ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL) {
+                        else if(ev.key.keysym.sym == SDLK_0 && SDL_GetModState() & KMOD_CTRL){
                         }
-                        else if (ev.key.keysym.sym == SDLK_s && SDL_GetModState() & KMOD_CTRL) {
+                        else if(ev.key.keysym.sym == SDLK_s && SDL_GetModState() & KMOD_CTRL) {
                         }
-                        else if (ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL) {
+                        else if(ev.key.keysym.sym == SDLK_o && SDL_GetModState() & KMOD_CTRL){
                         }
                     }
                 }
@@ -5360,56 +5362,56 @@ public:
         }
     }
 
-    void updateWiresForTransform(const vector<placedComp>& oldComps, const vector<placedComp>& newComps) {
+    void updateWiresForTransform(const vector<placedComp>& oldComps, const vector<placedComp>& newComps){
         for (auto& wire : wires) {
             bool changed = false;
             for (size_t i = 0; i < oldComps.size(); ++i) {
-                if (i >= newComps.size()) break;
+                if (i>= newComps.size()) break;
                 vector<SDL_Point> oldPins = gCompPinPos(oldComps [i]);
                 vector<SDL_Point> newPins = gCompPinPos(newComps [i]);
                 for (size_t pi = 0;pi < oldPins.size(); ++pi) {
                     if (wire.front().x == oldPins[pi].x && wire.front().y == oldPins[pi].y) {
                         wire.front() = newPins[pi];
-                        changed = true;
+                        changed =true;
                         break;
                     }
                     if (wire.back().x == oldPins[pi].x && wire.back().y == oldPins[pi].y) {
-                        wire.back() = newPins[pi];
+                        wire.back() =newPins[pi];
                         changed = true;
                         break;
                     }
                 }
                 if (changed) break;
             }
-            if (changed) wire = calcOrthoPath(wire.front(), wire.back());
+            if (changed) wire = calcOrthoPath(wire.front (), wire.back());
         }
     }
 
-    void render() {
-        SDL_SetRenderDrawColor(renderer, 245, 245, 245, 255);
-        SDL_RenderClear(renderer);
+    void render(){
+        SDL_SetRenderDrawColor( renderer, 245, 245, 245, 255);
+        SDL_RenderClear (renderer);
 
         if (currentState == app::STARTUP_MENU) {
-            drawTxt("Proteus", 60, 70, {0, 0, 0, 255}, titleFont);
-            drawTxt("Recent Projects:", 450, 155, {80, 80, 80, 255});
-            btnNewP->draw(renderer); btnOpenP->draw(renderer); btnRemRecents->draw(renderer);
+            drawTxt("Proteus", 60, 70, {0,0, 0, 255}, titleFont);
+            drawTxt("Recent Projects:", 450, 155, {80, 80, 80, 255} );
+            btnNewP->draw(renderer) ; btnOpenP->draw (renderer); btnRemRecents->draw (renderer);
             if (btnRecents.empty()) {
-                drawTxt("(no recent projects)", 470, 205, {150, 150, 150, 255 });
+                drawTxt("(no recent projects)", 470, 205, {150,150, 150, 255 });
             }
             else { for (auto btn : btnRecents) {
                 btn->draw(renderer);
             } }
         }
         else if (currentState == app::NEW_PROJECT_DIALOG) {
-            int dlgW = 550, dlgH = 420;
+            int dlgW =550, dlgH = 420;
             int offsetX = (winW - dlgW) / 2 - 150;
             int offsetY = (winH - dlgH) / 2 -80;
-            SDL_Rect dialogBox = {150 + offsetX, 80 + offsetY, dlgW, dlgH};
-            SDL_SetRenderDrawColor(renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer, &dialogBox);
-            SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect(renderer, &dialogBox);
+            SDL_Rect dialogBox ={150 + offsetX, 80 + offsetY, dlgW, dlgH};
+            SDL_SetRenderDrawColor(renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer,&dialogBox);
+            SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect( renderer, &dialogBox);
             drawTxt("New Project - Select Canvas Size", 285 + offsetX, 100 + offsetY, {20, 20, 20, 255});
             btnPresetA4->drawAt(renderer, 213 + offsetX, 180 + offsetY);
-            btnPresetA3->drawAt(renderer, 456 + offsetX, 180 + offsetY);
+            btnPresetA3->drawAt(renderer, 456 + offsetX, 180 + offsetY );
             btnPresetCustom->drawAt(renderer, 325 + offsetX, 245 + offsetY);
             btnCancelDialog->drawAt(renderer, 325 + offsetX, 390 + offsetY);
         }
@@ -5418,19 +5420,19 @@ public:
             int offsetX = (winW - dlgW)/ 2 - 150;
             int offsetY = (winH - dlgH) / 2 - 80;
             SDL_Rect dlg = { 150 + offsetX, 80 + offsetY, dlgW, dlgH};
-            SDL_SetRenderDrawColor(renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer, &dlg);
-            SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect(renderer, &dlg);
-            int titleW, titleH; if (font) TTF_SizeText(font, "Enter canvas dimensions:", &titleW, &titleH); else titleW = 250;
-            int titleX = dlg.x + (dlg.w- titleW) / 2;
-            drawTxt("Enter canvas dimensions:", titleX, 100 + offsetY, {20, 20, 20, 255});
-            drawTxt("Width:", 250 + offsetX, 200 + offsetY, {20, 20, 20, 255});
+            SDL_SetRenderDrawColor(renderer, 210, 210, 230, 255); SDL_RenderFillRect( renderer, &dlg);
+            SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect(renderer, &dlg );
+            int titleW, titleH; if (font) TTF_SizeText(font, "Enter canvas dimensions:",&titleW, &titleH); else titleW= 250;
+            int titleX = dlg.x + (dlg.w- titleW) / 2 ;
+            drawTxt ("Enter canvas dimensions:", titleX, 100 + offsetY, {20, 20, 20, 255});
+            drawTxt("Width:", 250 + offsetX, 200 + offsetY, {20, 20, 20,255} );
             drawTxt("Height:", 430 + offsetX, 200 + offsetY, {20, 20, 20, 255});
             if (txtWidth)
                 txtWidth->drawAt(renderer, 285 + offsetX, 225 + offsetY);
             if (txtHeight)
                 txtHeight->drawAt(renderer, 465 + offsetX, 225 + offsetY);
             if (btnCustomOK)
-                btnCustomOK->drawAt(renderer, 315 + offsetX, 390 + offsetY);
+                btnCustomOK->drawAt( renderer, 315 + offsetX, 390 + offsetY);
             if (btnCustomCancel)
                 btnCustomCancel->drawAt(renderer, 435 + offsetX, 390 + offsetY);
         }
@@ -5439,7 +5441,7 @@ public:
             int offsetX = (winW - dlgW) / 2 - 200;
             int offsetY = (winH - dlgH) / 2 - 150;
             SDL_Rect dlg = {200 + offsetX, 150 + offsetY, dlgW, dlgH};
-            SDL_SetRenderDrawColor(renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer, &dlg);
+            SDL_SetRenderDrawColor (renderer, 210, 210, 230, 255); SDL_RenderFillRect(renderer, &dlg);
             SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255); SDL_RenderDrawRect(renderer, &dlg);
             int titleW, titleH;
             if (font)
@@ -5453,10 +5455,10 @@ public:
             if (btnNameCancel)
                 btnNameCancel->drawAt(renderer, 455 + offsetX, 340 + offsetY);
         }
-        else if (currentState == app::WORKSPACE) {
-            updateSimulationTime();
-            updateCircuitSimulation();
-            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255); SDL_RenderClear(renderer);
+        else if (currentState ==app::WORKSPACE){
+            updateSimTime();
+            updateCircuit();
+            SDL_SetRenderDrawColor ( renderer, 255, 255, 255, 255); SDL_RenderClear (renderer);
 
             updateViewport();
 
@@ -5467,56 +5469,56 @@ public:
             vpY = tlbrH;
             vpH = winH - tlbrH - statH;
 
-            SDL_Rect tlbrBg = {0, 0, winW, tlbrH};
-            SDL_SetRenderDrawColor(renderer, 150, 170, 200, 255); SDL_RenderFillRect(renderer, &tlbrBg);
+            SDL_Rect tlbrBg = {0,0,winW, tlbrH};
+            SDL_SetRenderDrawColor(renderer, 150,170,200,255); SDL_RenderFillRect(renderer, &tlbrBg);
             btnBack->draw(renderer);
             for (auto b : tlbrBtns) b->draw(renderer);
 
             btnRun->draw(renderer);
             btnPause->draw(renderer);
             btnStop->draw(renderer);
-            string simText = "Simulation: " + simulationStateName() +
-                             "   Time: " + to_string(simulationTimeMs) + " ms";
-            drawTxt(simText, 350, 45, {20, 20, 20, 255}, libFont);
+            string simText = "Simulation: " + simulationStateText() +
+                             "   Time: " + to_string(simulationTime) + " ms";
+            drawTxt(simText, 350, 45, {20,20,20,255}, libFont);
             if (showLib) {
                 SDL_Rect libBg = { 0, tlbrH, pnlLW, vpH};
-                SDL_SetRenderDrawColor(renderer, 235, 235, 245, 255);
-                SDL_RenderFillRect(renderer, &libBg);
-                SDL_SetRenderDrawColor(renderer, 170, 170, 180, 255);
+                SDL_SetRenderDrawColor(renderer, 235,235,245,255);
+                SDL_RenderFillRect(renderer, &libBg) ;
+                SDL_SetRenderDrawColor(renderer, 170,170,180,255);
                 SDL_RenderDrawLine(renderer, pnlLW, tlbrH, pnlLW, tlbrH +vpH);
-                drawTxt("Library", 8, tlbrH+ 5, {0, 0, 0, 255});
+                drawTxt("Library" , 8, tlbrH+ 5, {0,0,0,255});
 
                 searchBox->draw(renderer);
 
                 string lowerFilter = toLower(searchFilter);
                 int yOff = tlbrH + 45;
                 bool anyShown = false;
-                for (auto& cat : libCategories) {
+                for (auto& cat : libCategories){
                     SDL_Rect catRect = {5, yOff, pnlLW-10, 20};
                     SDL_SetRenderDrawColor(renderer, cat.expanded ? 200 : 220, 210, 230, 255);
                     SDL_RenderFillRect(renderer, &catRect);
-                    SDL_SetRenderDrawColor(renderer, 80, 80, 80, 255);
+                    SDL_SetRenderDrawColor(renderer, 80,80,80,255);
                     SDL_RenderDrawRect(renderer, &catRect);
                     int catTextW, catTextH;
                     TTF_SizeText(font, cat.name.c_str(), &catTextW, &catTextH);
                     int catTx = catRect.x + (catRect.w - catTextW)/2;
                     int catTy = catRect.y + (catRect.h - catTextH)/2;
-                    drawTxt(cat.name, catTx, catTy, {0, 0, 0, 255});
+                    drawTxt(cat.name, catTx, catTy, {0,0,0,255});
                     yOff += 30;
                     bool showComponents = cat.expanded || !searchFilter.empty();
-                    if (showComponents) {
+                    if (showComponents){
                         for (auto& comp : cat.components) {
-                            if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos || toLower(comp).find(lowerFilter) != string::npos) {
+                            if (searchFilter.empty() || toLower(cat.name).find(lowerFilter) != string::npos || toLower(comp).find(lowerFilter)!= string::npos) {
                                 SDL_Rect compRect = {15, yOff, pnlLW-20, 20};
-                                SDL_SetRenderDrawColor(renderer, selLibItm == comp ?180 : 235, 230, 245, 255);
+                                SDL_SetRenderDrawColor(renderer, selLibItm==comp ?180 : 235, 230, 245, 255);
                                 SDL_RenderFillRect(renderer, &compRect);
-                                SDL_SetRenderDrawColor(renderer, 160, 160, 160, 255);
-                                SDL_RenderDrawRect(renderer, &compRect);
+                                SDL_SetRenderDrawColor(renderer, 160,160,160,255);
+                                SDL_RenderDrawRect (renderer, &compRect);
                                 int compTextW, compTextH;
                                 TTF_SizeText(libFont, comp.c_str(), &compTextW, &compTextH);
                                 int compTx = compRect.x + (compRect.w - compTextW)/2;
                                 int compTy = compRect.y + (compRect.h - compTextH)/2;
-                                drawTxt(comp, compTx, compTy, {0, 0, 0, 255}, libFont);
+                                drawTxt(comp, compTx, compTy, {0,0,0,255}, libFont);
                                 yOff += 28;
                                 anyShown = true;
                             }
@@ -5525,11 +5527,11 @@ public:
                     }
                 }
                 if (!anyShown && !searchFilter.empty()) {
-                    drawTxt("No results", 10, yOff, {150, 0, 0, 255});
+                    drawTxt("No results", 10, yOff, {150,0,0 ,255});
                     yOff += 22;
                 }
 
-                if (!selLibItm.empty()) {
+                if (!selLibItm.empty( )) {
                     previewRect = {5, yOff+5, pnlLW-10, 60};
                     drawCompPreviewLib(selLibItm, previewRect);
                     yOff += 70;
@@ -5537,56 +5539,56 @@ public:
 
                 yOff += 15;
                 int titleY = yOff;
-                drawTxt("Active Comps", 8, titleY, {0, 0, 0, 255});
+                drawTxt("Active Comps", 8, titleY, {0,0,0,255});
                 yOff += 25;
                 activeCompsY = yOff;
-                for (size_t i = 0; i<activeComps.size(); i++) {
+                for (size_t i=0; i<activeComps.size(); i++) {
                     SDL_Rect r = {5, yOff + (int)i*26, pnlLW-10, 20};
                     SDL_SetRenderDrawColor(renderer, 235, 230, 245, 255);
                     SDL_RenderFillRect(renderer, &r);
-                    SDL_SetRenderDrawColor(renderer, 150, 150, 150, 255);
+                    SDL_SetRenderDrawColor(renderer, 150,150,150,255);
                     SDL_RenderDrawRect(renderer, &r);
                     int textW, textH;
                     TTF_SizeText(libFont, activeComps[i].c_str(), &textW, &textH);
                     int textX = r.x + (r.w - textW) / 2;
                     int textY = r.y + (r.h - textH) / 2;
-                    drawTxt(activeComps[i], textX, textY, {0, 0, 0, 255}, libFont);
-                    SDL_SetRenderDrawColor(renderer, 200, 100, 100, 255);
+                    drawTxt(activeComps[i], textX, textY, {0,0,0,255}, libFont);
+                    SDL_SetRenderDrawColor(renderer, 200,100,100,255);
                     int xY = r.y + (r.h - 10) / 2;
-                    SDL_Rect xRect = {r.x+r.w-15, xY, 10, 10};
+                    SDL_Rect xRect = {r.x+r.w-15, xY, 10,10};
                     SDL_RenderDrawRect(renderer, &xRect);
                 }
             }
 
-            if (showProp) {
+            if (showProp){
                 int px = winW -pnlRW;
-                SDL_Rect propBg = {px, tlbrH, pnlRW, vpH};
-                SDL_SetRenderDrawColor(renderer, 225, 230, 240, 255); SDL_RenderFillRect(renderer, &propBg);
-                SDL_SetRenderDrawColor(renderer, 170, 170, 180, 255);
-                SDL_RenderDrawLine(renderer, px, tlbrH, px, tlbrH + vpH);
+                SDL_Rect propBg = {px, tlbrH, pnlRW , vpH};
+                SDL_SetRenderDrawColor(renderer, 225,230,240,255); SDL_RenderFillRect(renderer, &propBg);
+                SDL_SetRenderDrawColor(renderer, 170,170,180,255);
+                SDL_RenderDrawLine (renderer, px, tlbrH, px, tlbrH + vpH);
                 int propTitleW, propTitleH;
                 TTF_SizeText(font, "Properties", &propTitleW, &propTitleH);
                 int propTitleX = px +(pnlRW - propTitleW) /2;
-                drawTxt("Properties", propTitleX, tlbrH+5, {0, 0, 0, 255});
+                drawTxt("Properties", propTitleX, tlbrH+5, {0,0,0,255});
 
-                if (editingIndex < placedComponents.size() && propLabelInput && propValueInput && btnPropOK && btnPropCancel) {
-                    propLabelInput->setBox(px + 10, tlbrH + 90, pnlRW - 20, 25);
+                if (editingIndex < placedComponents.size() && propLabelInput && propValueInput && btnPropOK && btnPropCancel){
+                    propLabelInput->setBox (px + 10, tlbrH + 90, pnlRW - 20, 25);
                     propValueInput->setBox(px + 10, tlbrH + 160, pnlRW - 20, 25);
                     btnPropOK->setRect(px + 10, tlbrH + 250, 60, 25);
                     btnPropCancel->setRect(px+ 75, tlbrH + 250, 60, 25);
 
                     propLabelInput->draw(renderer);
                     propValueInput->draw(renderer);
-                    btnPropOK->draw(renderer);
+                    btnPropOK->draw (renderer);
                     btnPropCancel->draw(renderer);
 
-                    drawTxt("Label", px+10, tlbrH+70, {0, 0, 0, 255}, libFont);
-                    drawTxt("Value", px+10, tlbrH+140, {0, 0, 0, 255}, libFont);
+                    drawTxt("Label", px+10, tlbrH+70 , {0,0,0,255}, libFont);
+                    drawTxt("Value", px+10, tlbrH+140, {0,0,0,255}, libFont);
                 } else if (!selLibItm.empty()) {
                     int itemW, itemH;
                     TTF_SizeText(font, selLibItm.c_str(), &itemW, &itemH);
                     int itemX = px + (pnlRW - itemW)/ 2;
-                    drawTxt(selLibItm, itemX, tlbrH +45, {0, 0, 0, 255});
+                    drawTxt(selLibItm, itemX, tlbrH +45, {0,0,0,255});
                 }
             }
 
@@ -5596,48 +5598,51 @@ public:
             int cTop = wldToScrY(worldMaxY);
             int cRight = wldToScrX(worldMaxX);
             int cBottom = wldToScrY(worldMinY);
-            SDL_Rect canvasScreenRect = {cLeft, cTop, cRight - cLeft, cBottom - cTop};
+            SDL_Rect canvasScreenRect= {cLeft, cTop, cRight - cLeft, cBottom - cTop};
 
             SDL_Rect canvasClip;
-            SDL_IntersectRect(&vpRect, &canvasScreenRect, &canvasClip);
+            SDL_IntersectRect (&vpRect, &canvasScreenRect, &canvasClip);
             SDL_RenderSetClipRect(renderer, &canvasClip);
 
             drawGrid();
             for (size_t i = 0; i < placedComponents.size(); ++i) {
-                const auto& pc = placedComponents[i];
+                const auto& pc =placedComponents[i];
                 int sx = wldToScrX(pc.x);
                 int sy = wldToScrY(pc.y);
-                bool isSelected = find(selectedIndices.begin(), selectedIndices.end(), i) != selectedIndices.end();
+                bool isSelected = find(selectedIndices.begin() , selectedIndices.end(), i) != selectedIndices.end();
                 if (isSelected) {
-                    drawRotatedSelection(pc);
+                    drawRotatedSelection(pc) ;
                 }
                 drawCompCanvas(pc);
                 SDL_Point corners[4];
-                getCompCorners(pc, corners);
+                getCompCorners(pc, corners) ;
                 SDL_SetRenderDrawColor(renderer, 0, 0, 0, 80);
                 SDL_Point lines [5];
                 for (int c = 0; c < 4; c++) lines[c] = corners[c];
-                lines[4] = corners[0];
+                lines[4] = corners[0] ;
                 SDL_RenderDrawLines(renderer, lines, 5);
                 if (!pc.label.empty()) {
-                    drawTxt(pc.label, sx - 30, sy + 20, {0, 0, 0, 255}, libFont);
+                    drawTxt(pc.label, sx - 30, sy + 20, {0,0,0,255}, libFont );
                 }
                 if (!pc.value.empty()) {
-                    string visibleValue = pc.value;
+                    string displayedValue = pc.value;
                     if (pc.name == "Microcontroller") {
-                        string firmware = parseNamedString(pc.value, "firmware", "");
-                        visibleValue = firmware.empty() ? "No firmware" : "HEX loaded";
-                    } else if (visibleValue.size() > 24) {
-                        visibleValue = visibleValue.substr(0, 21) + "...";
+                        string firmware = namedText(pc.value, "firmware", "");
+                        displayedValue = firmware.empty() ? "No firmware" : "HEX loaded";
+                    } else if (displayedValue.size() > 24) {
+                        displayedValue = displayedValue.substr(0, 21) + "...";
                     }
-                    drawTxt(visibleValue, sx - 36, sy + 34, {70, 70, 70, 255}, libFont);
+                    drawTxt(displayedValue, sx - 36, sy + 34, {70,70,70,255}, libFont );
                 }
                 auto pins = gCompPinPos(pc);
-                const ComponentRuntime* runtime = findRuntime(pc.id);
+                const ComponentRuntime* runtimeState = runtimeFor(pc.id);
                 for (size_t pi = 0; pi < pins.size(); ++pi) {
-                    double voltage = runtime && pi < runtime->pinVoltages.size() ? runtime->pinVoltages[pi] : std::numeric_limits<double>::quiet_NaN();
-                    LogicLevel level = LogicStandard::fromVoltage(voltage);
-                    if (level == LogicLevel::HIGH) SDL_SetRenderDrawColor(renderer, 220, 30, 30, 230);
+                    double voltage = runtimeState && pi < runtimeState->pinVoltageValues.size() ? runtimeState->pinVoltageValues[pi] : std::numeric_limits<double>::quiet_NaN();
+                    LogicLevel level = LogicStandard::logicFromVoltage(voltage);
+                    if (simulationStatus == SimulationState::STOPPED) {
+                        SDL_SetRenderDrawColor(renderer, 35, 35, 35, 230);
+                    }
+                    else if (level == LogicLevel::HIGH) SDL_SetRenderDrawColor(renderer, 220, 30, 30, 230);
                     else if (level == LogicLevel::LOW) SDL_SetRenderDrawColor(renderer, 30, 80, 220, 230);
                     else SDL_SetRenderDrawColor(renderer, 220, 150, 20, 230);
                     int px = wldToScrX(pins[pi].x);
@@ -5658,11 +5663,14 @@ public:
             }
 
             for (size_t wi = 0; wi < wires.size(); ++wi) {
-                double voltage = wi < wireVoltages.size() ? wireVoltages[wi] : std::numeric_limits<double>::quiet_NaN();
-                LogicLevel level = LogicStandard::fromVoltage(voltage);
-                if (level == LogicLevel::HIGH) SDL_SetRenderDrawColor(renderer, 220, 35, 35, 220);
+                double voltage = wi < wireVoltageValues.size() ? wireVoltageValues[wi] : std::numeric_limits<double>::quiet_NaN();
+                LogicLevel level = LogicStandard::logicFromVoltage(voltage);
+                if (simulationStatus == SimulationState::STOPPED) {
+                    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 210);
+                }
+                else if (level == LogicLevel::HIGH) SDL_SetRenderDrawColor(renderer, 220, 35, 35, 220);
                 else if (level == LogicLevel::LOW) SDL_SetRenderDrawColor(renderer, 25, 100, 210, 220);
-                else SDL_SetRenderDrawColor(renderer, 110, 110, 110, 190);
+                else SDL_SetRenderDrawColor(renderer, 125, 125, 125, 200);
                 const auto& wire = wires[wi];
                 for (size_t si = 0; si + 1 < wire.size(); ++si) {
                     int x1 = wldToScrX(wire[si].x);
@@ -5673,12 +5681,12 @@ public:
                 }
             }
 
-            for (auto& jpt : junctions) {
+            for (auto& jpt : junctions){
                 int sx = wldToScrX(jpt.x);
-                int sy = wldToScrY(jpt.y);
+                int sy = wldToScrY (jpt.y);
                 SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                for (int r = 3; r <= 4; ++r) {
-                    SDL_Rect dot = {sx - r, sy - r, r*2, r*2};
+                for (int r = 3; r <= 4; ++r){
+                    SDL_Rect dot = {sx - r, sy - r, r*2, r*2} ;
                     SDL_RenderFillRect(renderer, &dot);
                 }
             }
@@ -5698,23 +5706,23 @@ public:
             }
 
             if (drawingSelection && selectionRect.w > 0 && selectionRect.h > 0) {
-                SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawBlendMode(renderer,SDL_BLENDMODE_BLEND);
                 SDL_SetRenderDrawColor(renderer, 0, 120, 215, 30);
-                SDL_RenderFillRect(renderer, &selectionRect);
+                SDL_RenderFillRect (renderer, &selectionRect);
                 SDL_SetRenderDrawColor(renderer, 0, 120, 215, 80);
                 SDL_RenderDrawRect(renderer, &selectionRect);
                 SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
             }
 
-            SDL_RenderSetClipRect(renderer, &vpRect);
+            SDL_RenderSetClipRect(renderer,&vpRect);
 
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderDrawRect(renderer, &canvasScreenRect);
+            SDL_RenderDrawRect(renderer,&canvasScreenRect);
 
-            SDL_RenderSetClipRect(renderer, nullptr);
+            SDL_RenderSetClipRect( renderer, nullptr);
 
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
-            drawStatusBar();
+            drawStatusBar() ;
         }
 
         SDL_RenderPresent(renderer);
@@ -5725,16 +5733,17 @@ public:
     }
 };
 
-int main() {
+int main(){
+
     PROTEUS app;
 
-    if (!app.initial()) {
+    if ( !app.initial() ){
         return -1;
     }
 
     while (app.active()) {
         app.handleE();
-        app.render();
+        app.render ();
         SDL_Delay(16);
     }
 
