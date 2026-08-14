@@ -2122,9 +2122,9 @@ private:
         SDL_RenderDrawLines(renderer, outline,5);
     }
 
-    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM,WIRE_ADD, WIRE_DELETE, WIRE_JUNCTION_ADD, WIRE_JUNCTION_REMOVE};
-    struct UndoAction{
-        UndoType type;
+    enum HistoryKind {PLACE_ITEM, DELETE_ITEM , MOVE_ITEM, LIB_ADD, LIB_REMOVE, EDIT_ITEM, TRANSFORM_ITEM,ADD_WIRE, DELETE_WIRE, ADD_JUNCTION, REMOVE_JUNCTION};
+    struct HistoryEntry{
+        HistoryKind type;
         placedComp comp;
         placedComp oldComp;
         string compName;
@@ -2137,8 +2137,8 @@ private:
         vector<SDL_Point> junctionsAfter;
         SDL_Point junctionPoint;
     };
-    vector<UndoAction> undoStack;
-    vector<UndoAction> redoStack;
+    vector<HistoryEntry> historyBack;
+    vector<HistoryEntry> historyForward;
 
     txtIn* propLabelInput;
     txtIn* propValueInput;
@@ -2148,16 +2148,16 @@ private:
     size_t lastClickedIndex;
     Uint32 lastClickTime;
 
-    void pushUndo (const UndoAction& action){
-        undoStack.push_back(action);
-        redoStack.clear();
+    void rememberChange (const HistoryEntry& action){
+        historyBack.push_back(action);
+        historyForward.clear();
     }
 
-    void undo() {
-        if (undoStack.empty()) return;
-        UndoAction act = undoStack.back();
-        undoStack.pop_back();
-        if (act.type ==COMP_PLACE) {
+    void stepHistoryBack() {
+        if (historyBack.empty()) return;
+        HistoryEntry act = historyBack.back();
+        historyBack.pop_back();
+        if (act.type ==PLACE_ITEM) {
             for (size_t i = 0; i < placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents. erase(placedComponents.begin() + i);
@@ -2166,45 +2166,45 @@ private:
             }
             wires = act.wiresBefore;
             junctions =act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type== COMP_DELETE) {
+        else if (act.type== DELETE_ITEM) {
             placedComponents.push_back(act.comp);
             wires = act.wiresBefore;
             junctions = act.junctionsBefore;
-            redoStack.push_back(act) ;
+            historyForward.push_back(act) ;
         }
-        else if (act.type == ACTIVE_ADD) {
+        else if (act.type == LIB_ADD) {
             auto it = find(activeComps.begin( ), activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 activeComps.erase(it);
-                UndoAction redoAct;
-                redoAct.type = ACTIVE_ADD ;
-                redoAct.compName = act.compName;
-                redoStack.push_back(redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = LIB_ADD ;
+                forwardEntry.compName = act.compName;
+                historyForward.push_back(forwardEntry);
             }
         }
-        else if (act.type == ACTIVE_REMOVE) {
+        else if (act.type == LIB_REMOVE) {
             if (act.activeIndex >= 0 && act.activeIndex<= (int)activeComps.size()) {
                 activeComps.insert(activeComps.begin() + act.activeIndex, act.compName);
-                UndoAction redoAct;
-                redoAct.type = ACTIVE_REMOVE;
-                redoAct.compName = act.compName;
-                redoAct.activeIndex = act.activeIndex;
-                redoStack.push_back(redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = LIB_REMOVE;
+                forwardEntry.compName = act.compName;
+                forwardEntry.activeIndex = act.activeIndex;
+                historyForward.push_back(forwardEntry);
             }
         }
-        else if (act.type == COMP_MOVE){
+        else if (act.type == MOVE_ITEM){
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM) {
+        else if (act.type == TRANSFORM_ITEM) {
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
-            redoStack.push_back (act);
+            historyForward.push_back (act);
         }
-        else if (act.type == COMP_EDIT) {
+        else if (act.type == EDIT_ITEM) {
             size_t idx = -1;
             for(size_t i = 0; i < placedComponents.size(); ++i){
                 if (placedComponents[i].name== act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
@@ -2214,44 +2214,44 @@ private:
             }
             if (idx < placedComponents.size() ) {
                 placedComponents[idx] = act.oldComp;
-                UndoAction redoAct;
-                redoAct.type = COMP_EDIT;
-                redoAct.oldComp = act.oldComp;
-                redoAct.comp = act.comp;
-                redoStack.push_back (redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = EDIT_ITEM;
+                forwardEntry.oldComp = act.oldComp;
+                forwardEntry.comp = act.comp;
+                historyForward.push_back (forwardEntry);
             }
         }
-        else if (act.type == WIRE_ADD) {
+        else if (act.type == ADD_WIRE) {
             wires = act.wiresBefore;
             junctions = act.junctionsBefore ;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == WIRE_DELETE) {
+        else if (act.type == DELETE_WIRE) {
             wires = act.wiresBefore;
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type== WIRE_JUNCTION_ADD) {
+        else if (act.type== ADD_JUNCTION) {
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_REMOVE) {
+        else if (act.type == REMOVE_JUNCTION) {
             junctions = act.junctionsBefore;
-            redoStack.push_back (act);
+            historyForward.push_back (act);
         }
     }
 
-    void redo() {
-        if (redoStack.empty()) return;
-        UndoAction act = redoStack.back();
-        redoStack.pop_back();
-        if (act.type == COMP_PLACE){
+    void stepHistoryForward() {
+        if (historyForward.empty()) return;
+        HistoryEntry act = historyForward.back();
+        historyForward.pop_back();
+        if (act.type == PLACE_ITEM){
             placedComponents.push_back(act.comp) ;
             wires = act.wiresAfter;
             junctions= act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_DELETE) {
+        else if (act.type == DELETE_ITEM) {
             for(size_t i = 0; i< placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents [i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents.erase(placedComponents.begin()+ i);
@@ -2260,38 +2260,38 @@ private:
             }
             wires = act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == ACTIVE_ADD) {
+        else if (act.type == LIB_ADD) {
             activeComps.push_back(act.compName);
-            UndoAction undoAct;
-            undoAct.type =ACTIVE_ADD;
-            undoAct.compName = act.compName;
-            undoStack.push_back (undoAct);
+            HistoryEntry backEntry;
+            backEntry.type =LIB_ADD;
+            backEntry.compName = act.compName;
+            historyBack.push_back (backEntry);
         }
-        else if (act.type == ACTIVE_REMOVE) {
+        else if (act.type == LIB_REMOVE) {
             auto it = find(activeComps.begin() , activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 int idx = it - activeComps.begin();
                 activeComps.erase(it );
-                UndoAction undoAct;
-                undoAct.type = ACTIVE_REMOVE;
-                undoAct.compName = act.compName;
-                undoAct.activeIndex = idx;
-                undoStack.push_back(undoAct);
+                HistoryEntry backEntry;
+                backEntry.type = LIB_REMOVE;
+                backEntry.compName = act.compName;
+                backEntry.activeIndex = idx;
+                historyBack.push_back(backEntry);
             }
         }
-        else if (act.type ==COMP_MOVE) {
+        else if (act.type ==MOVE_ITEM) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM ) {
+        else if (act.type == TRANSFORM_ITEM ) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_EDIT) {
+        else if (act.type == EDIT_ITEM) {
             size_t idx =-1;
             for (size_t i = 0; i < placedComponents.size();++i) {
                 if (placedComponents[i].name == act.oldComp.name && placedComponents[i] .x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
@@ -2301,26 +2301,26 @@ private:
             }
             if (idx < placedComponents.size()){
                 placedComponents[idx] = act.comp;
-                undoStack.push_back(act);
+                historyBack.push_back(act);
             }
         }
-        else if (act.type == WIRE_ADD) {
+        else if (act.type == ADD_WIRE) {
             wires =act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == WIRE_DELETE) {
+        else if (act.type == DELETE_WIRE) {
             wires = act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_ADD){
+        else if (act.type == ADD_JUNCTION){
             junctions = act .junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if ( act.type == WIRE_JUNCTION_REMOVE) {
+        else if ( act.type == REMOVE_JUNCTION) {
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
     }
 
@@ -4189,8 +4189,8 @@ private:
         searchFilter = "" ;
         showLib = false;
         showProp= false;
-        undoStack.clear();
-        redoStack.clear();
+        historyBack.clear();
+        historyForward.clear();
         selectedIndices.clear ();
         editingIndex = -1;
         lastClickedIndex = -1;
@@ -4981,8 +4981,8 @@ public:
                     nextComponentNumber = 1;
                     wires.clear();
                     junctions.clear();
-                    undoStack.clear() ;
-                    redoStack.clear();
+                    historyBack.clear() ;
+                    historyForward.clear();
                     selectedIndices.clear();
                     editingIndex =-1;
                     lastClickedIndex = -1;
@@ -5141,12 +5141,12 @@ public:
                     mouseHandled =true;
                 }
                 else if (!mouseHandled && tlbrBtns[5]->click (ev)) {
-                    undo();
+                    stepHistoryBack();
                     mouseHandled = true;
                     cout << "Undo\n";
                 }
                 else if (!mouseHandled && tlbrBtns[6]->click(ev)) {
-                    redo();
+                    stepHistoryForward();
                     mouseHandled = true;
                     cout << "Redo \n";
                 }
@@ -5212,11 +5212,11 @@ public:
                             SDL_Rect r = {5, activeCompsY + index * 26, pnlLW - 10, 20};
                             SDL_Rect xRect = {r.x + r.w - 15, r.y + (r.h - 10)/2, 10, 10};
                             if (mseX >= xRect.x && mseX <= xRect.x + xRect.w && mseY >= xRect. y && mseY <= xRect.y + xRect.h) {
-                                UndoAction act;
-                                act.type = ACTIVE_REMOVE;
+                                HistoryEntry act;
+                                act.type = LIB_REMOVE;
                                 act.compName = activeComps[index];
                                 act.activeIndex = index ;
-                                pushUndo(act);
+                                rememberChange(act);
                                 activeComps.erase(activeComps.begin() + index);
                                 canvasClickHandled = true;
                             }
@@ -5244,10 +5244,10 @@ public:
                                             currentTool = Tool::COMPONENT;
                                             if (ev.button.clicks == 2) {
                                                 if (find(activeComps.begin(), activeComps.end(),comp)== activeComps.end()) {
-                                                    UndoAction act;
-                                                    act.type = ACTIVE_ADD;
+                                                    HistoryEntry act;
+                                                    act.type = LIB_ADD;
                                                     act.compName = comp;
-                                                    pushUndo (act);
+                                                    rememberChange (act);
                                                     activeComps.push_back (comp);
                                                 }
                                             }
@@ -5327,14 +5327,14 @@ public:
                                     wireStartActive = true;
                                 } else {
                                     vector<SDL_Point> path = calcOrthoPath(wireStartPoint, clickPoint);
-                                    UndoAction act;
-                                    act.type = WIRE_ADD;
+                                    HistoryEntry act;
+                                    act.type = ADD_WIRE;
                                     act.wiresBefore = wires;
                                     act.junctionsBefore= junctions;
                                     wires.push_back(path);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter= junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     wireStartActive = false;
                                 }
                                 canvasClickHandled = true;
@@ -5345,15 +5345,15 @@ public:
                                 clampToCanvas (wx, wy);
                                 placedComp pc ={selLibItm, wx, wy, 0, false, false, "", ""} ;
                                 initComponent(pc);
-                                UndoAction act;
-                                act.type = COMP_PLACE;
+                                HistoryEntry act;
+                                act.type = PLACE_ITEM;
                                 act.comp = pc ;
                                 act.wiresBefore = wires;
                                 act.junctionsBefore = junctions;
                                 placedComponents.push_back (pc);
                                 act.wiresAfter = wires;
                                 act.junctionsAfter = junctions;
-                                pushUndo(act);
+                                rememberChange(act);
                             } else {
                                 bool hitComponent =false;
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
@@ -5479,23 +5479,23 @@ public:
                                                                     if (pointNear(jpt, inter, 6)) { exists = true ; break; }
                                                                 }
                                                                 if(!exists) {
-                                                                    UndoAction act;
-                                                                    act.type = WIRE_JUNCTION_ADD;
+                                                                    HistoryEntry act;
+                                                                    act.type = ADD_JUNCTION;
                                                                     act.junctionsBefore= junctions;
                                                                     junctions.push_back(inter);
                                                                     act.junctionsAfter = junctions;
-                                                                    pushUndo(act);
+                                                                    rememberChange(act);
                                                                 }
                                                                 else {
                                                                     for (auto it = junctions.begin(); it != junctions.end(); ++it) {
                                                                         if (pointNear(*it, inter, 6)){
-                                                                            UndoAction act;
-                                                                            act.type = WIRE_JUNCTION_REMOVE;
+                                                                            HistoryEntry act;
+                                                                            act.type = REMOVE_JUNCTION;
                                                                             act. junctionsBefore = junctions;
                                                                             act.junctionPoint = *it;
                                                                             junctions.erase(it);
                                                                             act.junctionsAfter = junctions;
-                                                                            pushUndo(act);
+                                                                            rememberChange(act);
                                                                             break ;
                                                                         }
                                                                     }
@@ -5547,14 +5547,14 @@ public:
                         }
                         if (!canvasClickHandled && btnPropOK && btnPropOK->click(ev)){
                             if (editingIndex <placedComponents.size()) {
-                                UndoAction act;
-                                act.type =COMP_EDIT;
+                                HistoryEntry act;
+                                act.type =EDIT_ITEM;
                                 act.oldComp = placedComponents [editingIndex];
                                 placedComponents[editingIndex].label = propLabelInput->gTxt();
                                 placedComponents[editingIndex].value = propValueInput->gTxt();
                                 applyComponentSettings(placedComponents[editingIndex]);
                                 act.comp = placedComponents[editingIndex];
-                                pushUndo (act);
+                                rememberChange (act);
                             }
                             editingIndex = -1;
                             showProp = false;
@@ -5591,8 +5591,8 @@ public:
                                 int x2 = wldToScrX(wires[wi][si+1].x);
                                 int y2 = wldToScrY(wires[wi][si+1].y);
                                 if (pointToSegmentDist(mseX, mseY, x1, y1, x2, y2) < 6) {
-                                    UndoAction act;
-                                    act.type = WIRE_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_WIRE;
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions ;
                                     vector<SDL_Point> removedWireData = wires[wi];
@@ -5600,7 +5600,7 @@ public:
                                     removeJunctionsOnWire (removedWireData);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     removedWire = true;
                                     break;
                                 }
@@ -5610,12 +5610,12 @@ public:
                         if (!removedWire) {
                             for (size_t i = 0; i < placedComponents.size(); ++i) {
                                 if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))){
-                                    UndoAction act;
-                                    act.type = COMP_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_ITEM;
                                     act.comp = placedComponents[i];
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     placedComponents.erase (placedComponents.begin() + i);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter =junctions;
@@ -5634,13 +5634,13 @@ public:
                     if (draggingComponents){
                         if (dragStartX != mseX ||dragStartY != mseY){
                             updateWiresForMovingComp () ;
-                            UndoAction act;
-                            act.type = COMP_MOVE;
+                            HistoryEntry act;
+                            act.type = MOVE_ITEM;
                             act.compsBefore= preDragComponents;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = preDragWires;
                             act.wiresAfter = wires;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         draggingComponents = false;
                     }
@@ -5775,8 +5775,8 @@ public:
                 if (ev.type == SDL_KEYDOWN) {
                     bool textFieldActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive()) ||(searchBox && searchBox->isActive());
 
-                    if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { undo();}
-                    else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { redo(); }
+                    if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { stepHistoryBack();}
+                    else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { stepHistoryForward(); }
                     else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL) && (SDL_GetModState() & KMOD_SHIFT)) {
                         saveProjectCopy();
                         selLibItm = "";
@@ -5832,12 +5832,12 @@ public:
                             for (auto it = selectedIndices.rbegin(); it != selectedIndices.rend() ; ++it) {
                                 size_t i = *it;
                                 if (i < placedComponents.size()) {
-                                    UndoAction act;
-                                    act.type = COMP_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_ITEM;
                                     act.comp = placedComponents [i];
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     placedComponents.erase(placedComponents.begin() + i);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter = junctions ;
@@ -5854,15 +5854,15 @@ public:
                                 placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type = COMP_TRANSFORM ;
+                            HistoryEntry act;
+                            act.type = TRANSFORM_ITEM ;
                             act.compsBefore = before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeRotate;
                             act.wiresAfter = wires;
                             act.junctionsBefore= junctionsBeforeRotate;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if (ev.key.keysym.sym== SDLK_h){
                             vector <placedComp> before = placedComponents;
@@ -5872,15 +5872,15 @@ public:
                                 placedComponents[idx].flipH = !placedComponents[idx].flipH;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type =COMP_TRANSFORM;
+                            HistoryEntry act;
+                            act.type =TRANSFORM_ITEM;
                             act.compsBefore = before;
                             act.compsAfter =placedComponents;
                             act.wiresBefore = wiresBeforeFlip;
                             act.wiresAfter = wires;
                             act.junctionsBefore= junctionsBeforeFlip;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if(ev.key.keysym.sym == SDLK_v) {
                             vector<placedComp> before = placedComponents;
@@ -5890,15 +5890,15 @@ public:
                                 placedComponents [idx].flipV = !placedComponents [idx].flipV;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type = COMP_TRANSFORM;
+                            HistoryEntry act;
+                            act.type = TRANSFORM_ITEM;
                             act.compsBefore= before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeFlipV;
                             act.wiresAfter = wires;
                             act.junctionsBefore = junctionsBeforeFlipV;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym == SDLK_KP_PLUS){
                             float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
