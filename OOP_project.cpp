@@ -1188,6 +1188,12 @@ public:
         : FixedPinComponent(std::move(name), "Display", std::move(value), std::move(pins)) {}
 };
 
+class MeterComponent : public FixedPinComponent {
+public:
+    MeterComponent(string name, string value, vector<LocalPin> pins)
+        : FixedPinComponent(std::move(name), "Measurement", std::move(value), std::move(pins)) {}
+};
+
 class LogicGateComponent : public Component {
 public:
     LogicGateComponent(string name, string value)
@@ -1335,6 +1341,9 @@ public:
             {18,-14,PinKind::INPUT},{18,-6,PinKind::INPUT},{18,2,PinKind::INPUT},{18,10,PinKind::INPUT}
         });
 
+        static MeterComponent voltageMeter("Voltmeter", "range=20", {{-32,0,PinKind::INPUT},{32,0,PinKind::INPUT}});
+        static MeterComponent currentMeter("Ammeter", "shunt=0.01", {{-32,0,PinKind::PASSIVE},{32,0,PinKind::PASSIVE}});
+
         static LogicGateComponent andGate("AND Gate", "inputs=2;delay=10");
         static LogicGateComponent orGate("OR Gate", "inputs=2;delay=10");
         static LogicGateComponent notGateValue("NOT Gate", "delay=10");
@@ -1366,6 +1375,8 @@ public:
         if (name == "Potentiometer") return dial;
         if (name == "LED") return led;
         if (name == "7-Segment") return seven;
+        if (name == "Voltmeter") return voltageMeter;
+        if (name == "Ammeter") return currentMeter;
         if (name == "AND Gate") return andGate;
         if (name == "OR Gate") return orGate;
         if (name == "NOT Gate") return notGateValue;
@@ -1753,6 +1764,7 @@ private:
     BUTTONS* btnStop;
     BUTTONS* btnSingleStep;
     BUTTONS* btnVoltageProbe;
+    BUTTONS* btnWavePanel;
     int canvasWidth;
     int canvasHeight;
     string penProjectName;
@@ -1798,7 +1810,7 @@ private:
     bool showLib;
     bool showProp;
     int activeCompsY;
-    string currentProjectPath;
+    string projectFilePath;
 
     vector <placedComp> placedComponents;
 
@@ -1832,6 +1844,7 @@ private:
         LogicLevel previousClockLevel = LogicLevel::LOW;
         bool ledState = false;
         vector<bool> segmentStateList = vector<bool>(8, false);
+        double meterReading = std::numeric_limits<double>::quiet_NaN();
     };
 
     unordered_map<int, ComponentRuntime> runtimeData;
@@ -1851,6 +1864,21 @@ private:
     SimulationState simulationStatus;
     Uint32 simulationTime;
     Uint32 lastRealTimeTick;
+
+    bool wavePanelOpen;
+    int wavePickChannel;
+    array<int, 2> waveWireChoice;
+    array<vector<pair<Uint32, double>>, 2> waveHistory;
+    array<Uint32, 2> waveLastMark;
+    double waveTimeDiv;
+    array<double, 2> waveVoltDiv;
+    SDL_Rect wavePanelBox;
+    SDL_Rect waveCh1Box;
+    SDL_Rect waveCh2Box;
+    SDL_Rect waveTimeBox;
+    SDL_Rect waveV1Box;
+    SDL_Rect waveV2Box;
+    SDL_Rect waveCloseBox;
     void updateWorldBounds() {
         worldMinX = -canvasWidth/ 2;
         worldMaxX = canvasWidth/ 2;
@@ -2020,6 +2048,7 @@ private:
         if (comp.name == "LCD 16x2") return {72, 38};
         if (comp.name == "Keypad 4x4") return {48, 38};
         if (comp.name == "ADC" || comp.name == "DAC") return {56, 42};
+        if (comp.name == "Voltmeter" || comp.name == "Ammeter") return {44, 24};
         return {40, 20};
     }
 
@@ -2615,6 +2644,218 @@ private:
         drawTxt(text, hintBox.x + 6, hintBox.y + 4, {20,20,20,255}, libFont);
     }
 
+    string waveScaleText(double value) const {
+        stringstream stream;
+        if (std::fabs(value - std::round(value)) < 0.0001) stream << (int)std::round(value);
+        else stream << fixed << setprecision(1) << value;
+        return stream.str();
+    }
+
+    void setWavePanelRects() {
+        int panelWidth = std::min(540, std::max(430, winW - 40));
+        int panelHeight = 300;
+        int panelX = std::max(10, winW - panelWidth - 15);
+        int panelY = std::max(tlbrH + 10, 85);
+        wavePanelBox = {panelX, panelY, panelWidth, panelHeight};
+        waveCloseBox = {panelX + panelWidth - 58, panelY + 8, 48, 22};
+        waveCh1Box = {panelX + 12, panelY + 38, 88, 24};
+        waveCh2Box = {panelX + 108, panelY + 38, 88, 24};
+        waveTimeBox = {panelX + 204, panelY + 38, 104, 24};
+        waveV1Box = {panelX + 316, panelY + 38, 94, 24};
+        waveV2Box = {panelX + 418, panelY + 38, 94, 24};
+    }
+
+    bool pointInside(const SDL_Rect& box, int x, int y) const {
+        return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+    }
+
+    void resetWaveHistory() {
+        for (int channel = 0; channel < 2; ++channel) {
+            waveHistory[channel].clear();
+            waveLastMark[channel] = std::numeric_limits<Uint32>::max();
+        }
+    }
+
+    int wireNearScreenPoint(int screenX, int screenY) {
+        double bestDistance = 10.0;
+        int bestWire = -1;
+        for (size_t wireNumber = 0; wireNumber < wires.size(); ++wireNumber) {
+            const auto& path = wires[wireNumber];
+            for (size_t part = 0; part + 1 < path.size(); ++part) {
+                int x1 = wldToScrX(path[part].x);
+                int y1 = wldToScrY(path[part].y);
+                int x2 = wldToScrX(path[part + 1].x);
+                int y2 = wldToScrY(path[part + 1].y);
+                double distance = pointToSegmentDist(screenX, screenY, x1, y1, x2, y2);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestWire = (int)wireNumber;
+                }
+            }
+        }
+        return bestWire;
+    }
+
+    void cycleWaveTime() {
+        const double choices[] = {10.0, 20.0, 50.0, 100.0, 200.0};
+        int current = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (std::fabs(waveTimeDiv - choices[i]) < 0.001) current = i;
+        }
+        waveTimeDiv = choices[(current + 1) % 5];
+    }
+
+    void cycleWaveVoltage(int channel) {
+        if (channel < 0 || channel > 1) return;
+        const double choices[] = {0.5, 1.0, 2.0, 5.0, 10.0};
+        int current = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (std::fabs(waveVoltDiv[channel] - choices[i]) < 0.001) current = i;
+        }
+        waveVoltDiv[channel] = choices[(current + 1) % 5];
+    }
+
+    bool handleWavePanelClick(int x, int y) {
+        if (!wavePanelOpen) return false;
+        setWavePanelRects();
+        if (!pointInside(wavePanelBox, x, y)) return false;
+
+        if (pointInside(waveCloseBox, x, y)) {
+            wavePanelOpen = false;
+            wavePickChannel = -1;
+            return true;
+        }
+        if (pointInside(waveCh1Box, x, y)) {
+            wavePickChannel = 0;
+            return true;
+        }
+        if (pointInside(waveCh2Box, x, y)) {
+            wavePickChannel = 1;
+            return true;
+        }
+        if (pointInside(waveTimeBox, x, y)) {
+            cycleWaveTime();
+            return true;
+        }
+        if (pointInside(waveV1Box, x, y)) {
+            cycleWaveVoltage(0);
+            return true;
+        }
+        if (pointInside(waveV2Box, x, y)) {
+            cycleWaveVoltage(1);
+            return true;
+        }
+        return true;
+    }
+
+    void connectWaveChannel(int screenX, int screenY) {
+        if (wavePickChannel < 0 || wavePickChannel > 1) return;
+        int wireNumber = wireNearScreenPoint(screenX, screenY);
+        if (wireNumber >= 0) {
+            int channel = wavePickChannel;
+            waveWireChoice[channel] = wireNumber;
+            waveHistory[channel].clear();
+            waveLastMark[channel] = std::numeric_limits<Uint32>::max();
+            simulationLogLines.push_back("Scope CH" + to_string(channel + 1) + " connected to wire " + to_string(wireNumber + 1) + ".");
+            if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
+        }
+        wavePickChannel = -1;
+    }
+
+    void captureWaveData() {
+        if (simulationStatus == SimulationState::STOPPED) return;
+        for (int channel = 0; channel < 2; ++channel) {
+            int wireNumber = waveWireChoice[channel];
+            if (wireNumber < 0 || wireNumber >= (int)wireVoltageValues.size()) continue;
+            if (waveLastMark[channel] == simulationTime) continue;
+            waveLastMark[channel] = simulationTime;
+            waveHistory[channel].push_back({simulationTime, wireVoltageValues[wireNumber]});
+            if (waveHistory[channel].size() > 2000) waveHistory[channel].erase(waveHistory[channel].begin(), waveHistory[channel].begin() + 200);
+        }
+    }
+
+    void drawWaveButton(const SDL_Rect& box, const string& text, SDL_Color fillColor) {
+        SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b, fillColor.a);
+        SDL_RenderFillRect(renderer, &box);
+        SDL_SetRenderDrawColor(renderer, 90, 90, 90, 255);
+        SDL_RenderDrawRect(renderer, &box);
+        int tw = 0;
+        int th = 0;
+        if (libFont) TTF_SizeText(libFont, text.c_str(), &tw, &th);
+        drawTxt(text, box.x + std::max(4, (box.w - tw) / 2), box.y + std::max(2, (box.h - th) / 2), {25,25,25,255}, libFont);
+    }
+
+    void drawWavePanel() {
+        if (!wavePanelOpen) return;
+        setWavePanelRects();
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 245, 247, 250, 248);
+        SDL_RenderFillRect(renderer, &wavePanelBox);
+        SDL_SetRenderDrawColor(renderer, 70, 75, 85, 255);
+        SDL_RenderDrawRect(renderer, &wavePanelBox);
+
+        drawTxt("Oscilloscope", wavePanelBox.x + 12, wavePanelBox.y + 10, {20,20,20,255}, font);
+        drawWaveButton(waveCloseBox, "Close", {235,205,205,255});
+        drawWaveButton(waveCh1Box, wavePickChannel == 0 ? "Pick CH1..." : "Pick CH1", {245,210,210,255});
+        drawWaveButton(waveCh2Box, wavePickChannel == 1 ? "Pick CH2..." : "Pick CH2", {205,220,250,255});
+        drawWaveButton(waveTimeBox, "T/Div " + waveScaleText(waveTimeDiv) + "ms", {230,230,230,255});
+        drawWaveButton(waveV1Box, "CH1 " + waveScaleText(waveVoltDiv[0]) + "V", {245,220,220,255});
+        drawWaveButton(waveV2Box, "CH2 " + waveScaleText(waveVoltDiv[1]) + "V", {220,230,250,255});
+
+        string ch1Name = waveWireChoice[0] >= 0 ? "CH1: Wire " + to_string(waveWireChoice[0] + 1) : "CH1: not connected";
+        string ch2Name = waveWireChoice[1] >= 0 ? "CH2: Wire " + to_string(waveWireChoice[1] + 1) : "CH2: not connected";
+        drawTxt(ch1Name, wavePanelBox.x + 14, wavePanelBox.y + 68, {205,45,45,255}, libFont);
+        drawTxt(ch2Name, wavePanelBox.x + 180, wavePanelBox.y + 68, {45,90,210,255}, libFont);
+
+        SDL_Rect graphBox = {wavePanelBox.x + 14, wavePanelBox.y + 92, wavePanelBox.w - 28, wavePanelBox.h - 106};
+        SDL_SetRenderDrawColor(renderer, 20, 22, 26, 255);
+        SDL_RenderFillRect(renderer, &graphBox);
+        SDL_SetRenderDrawColor(renderer, 65, 70, 75, 255);
+        for (int division = 0; division <= 8; ++division) {
+            int x = graphBox.x + division * graphBox.w / 8;
+            SDL_RenderDrawLine(renderer, x, graphBox.y, x, graphBox.y + graphBox.h);
+        }
+        for (int division = 0; division <= 6; ++division) {
+            int y = graphBox.y + division * graphBox.h / 6;
+            SDL_RenderDrawLine(renderer, graphBox.x, y, graphBox.x + graphBox.w, y);
+        }
+
+        double duration = waveTimeDiv * 8.0;
+        double endTime = (double)simulationTime;
+        double beginTime = std::max(0.0, endTime - duration);
+        SDL_RenderSetClipRect(renderer, &graphBox);
+
+        for (int channel = 0; channel < 2; ++channel) {
+            SDL_Color traceColor = channel == 0 ? SDL_Color{235,70,70,255} : SDL_Color{70,125,245,255};
+            SDL_SetRenderDrawColor(renderer, traceColor.r, traceColor.g, traceColor.b, traceColor.a);
+            bool hasPrevious = false;
+            int previousX = 0;
+            int previousY = 0;
+            for (const auto& sample : waveHistory[channel]) {
+                double timeValue = (double)sample.first;
+                if (timeValue < beginTime || timeValue > endTime) {
+                    hasPrevious = false;
+                    continue;
+                }
+                if (std::isnan(sample.second)) {
+                    hasPrevious = false;
+                    continue;
+                }
+                int x = graphBox.x + (int)std::lround((timeValue - beginTime) * graphBox.w / std::max(1.0, duration));
+                double pixelsPerDiv = graphBox.h / 6.0;
+                int y = graphBox.y + graphBox.h / 2 - (int)std::lround((sample.second / waveVoltDiv[channel]) * pixelsPerDiv);
+                if (hasPrevious) SDL_RenderDrawLine(renderer, previousX, previousY, x, y);
+                previousX = x;
+                previousY = y;
+                hasPrevious = true;
+            }
+        }
+
+        SDL_RenderSetClipRect(renderer, nullptr);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    }
+
     string simulationStateText() const {
         if (simulationStatus == SimulationState::RUNNING) return "RUN";
         if (simulationStatus == SimulationState::PAUSED) return "PAUSE";
@@ -2632,6 +2873,7 @@ private:
         if (simulationStatus == SimulationState::STOPPED) {
             simulationTime = 0;
             resetSimulationValues();
+            resetWaveHistory();
         }
         simulationStatus = SimulationState::RUNNING;
         lastRealTimeTick = SDL_GetTicks();
@@ -2655,6 +2897,10 @@ private:
         simulationTime = 0;
         lastRealTimeTick = SDL_GetTicks();
         resetSimulationValues();
+        resetWaveHistory();
+        wavePanelOpen = false;
+        wavePickChannel = -1;
+        waveWireChoice = {-1, -1};
         simulationLogLines.push_back("Simulation stopped.");
         if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
     }
@@ -2882,7 +3128,7 @@ private:
             bool changed = false;
             for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
                 const placedComp& comp = placedComponents[ci];
-                if (comp.name != "Resistor" && comp.name != "Inductor") continue;
+                if (comp.name != "Resistor" && comp.name != "Inductor" && comp.name != "Ammeter") continue;
                 const vector<int>& pins = componentPinLinks[ci];
                 if (pins.size() < 2) continue;
                 double a = nodeVoltage(pins[0]);
@@ -3113,11 +3359,27 @@ private:
                 for (size_t i = 0; i < runtimeState.pinVoltageValues.size() && i < 8; ++i)
                     runtimeState.segmentStateList[i] = LogicStandard::logicFromVoltage(runtimeState.pinVoltageValues[i]) == LogicLevel::HIGH;
             }
+            if (comp.name == "Voltmeter" && runtimeState.pinVoltageValues.size() >= 2) {
+                double firstVoltage = runtimeState.pinVoltageValues[0];
+                double secondVoltage = runtimeState.pinVoltageValues[1];
+                if (!std::isnan(firstVoltage) && !std::isnan(secondVoltage)) runtimeState.meterReading = firstVoltage - secondVoltage;
+                else runtimeState.meterReading = std::numeric_limits<double>::quiet_NaN();
+            }
+            if (comp.name == "Ammeter" && runtimeState.pinVoltageValues.size() >= 2) {
+                double firstVoltage = runtimeState.pinVoltageValues[0];
+                double secondVoltage = runtimeState.pinVoltageValues[1];
+                double shuntValue = namedNumber(comp.value, "shunt", 0.01);
+                if (shuntValue <= 0.0) shuntValue = 0.01;
+                if (!std::isnan(firstVoltage) && !std::isnan(secondVoltage)) runtimeState.meterReading = (firstVoltage - secondVoltage) / shuntValue;
+                else runtimeState.meterReading = std::numeric_limits<double>::quiet_NaN();
+            }
         }
 
         wireVoltageValues.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
         for (size_t wi = 0; wi < wires.size(); ++wi)
             if (wireNodeList[wi] >= 0) wireVoltageValues[wi] = nodeVoltage(wireNodeList[wi]);
+
+        captureWaveData();
 
         for (const string& warningLine : warningSet) {
             if (lastWarningSet.find(warningLine) == lastWarningSet.end()) {
@@ -3258,6 +3520,23 @@ private:
                     drawTxt(string(1, labels[rowIndexValue][column]), c.x - 4, c.y - 7, {0,0,0,255}, libFont);
                 }
             }
+        }
+        else if (comp.name == "Voltmeter" || comp.name == "Ammeter") {
+            drawLocalBox(34, 18, {35,75,120,255});
+            SDL_Point centerPoint = toScreen(0, 0);
+            const ComponentRuntime* meterState = runtimeFor(comp.id);
+            string meterTitle = comp.name == "Voltmeter" ? "V" : "A";
+            drawTxt(meterTitle, centerPoint.x - 5, centerPoint.y - 16, {35,75,120,255}, libFont);
+            string meterText = "----";
+            if (meterState && !std::isnan(meterState->meterReading)) {
+                stringstream stream;
+                if (comp.name == "Voltmeter") stream << fixed << setprecision(2) << meterState->meterReading << " V";
+                else stream << fixed << setprecision(3) << meterState->meterReading << " A";
+                meterText = stream.str();
+            } else if (simulationStatus != SimulationState::STOPPED) {
+                meterText = "Float";
+            }
+            drawTxt(meterText, centerPoint.x - 28, centerPoint.y + 2, {20,20,20,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3920,7 +4199,7 @@ private:
             searchBox->setTxt( "Search...");
     }
 
-    string fileDialog() {
+    string chooseProjectToOpen() {
         char filename [MAX_PATH ] = "";
 
         OPENFILENAMEA ofn;
@@ -3937,6 +4216,20 @@ private:
             return string( filename );
         }
         return "";
+    }
+
+    string chooseProjectSavePath() {
+        char filename[MAX_PATH] = "";
+        OPENFILENAMEA chooser;
+        ZeroMemory(&chooser, sizeof(chooser));
+        chooser.lStructSize = sizeof(chooser);
+        chooser.hwndOwner = NULL;
+        chooser.lpstrFilter = "Proteus Project Files\0*.proj\0All Files\0*.*\0";
+        chooser.lpstrFile = filename;
+        chooser.nMaxFile = MAX_PATH;
+        chooser.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+        chooser.lpstrDefExt = "proj";
+        return GetSaveFileNameA(&chooser) ? string(filename) : string();
     }
 
     string selectHexFile() {
@@ -4094,7 +4387,7 @@ private:
         currentState = app::PROJECT_NAME_DIALOG;
     }
 
-    void saveProjectToFile(const string& path){
+    void writeProjectData(const string& path){
         ofstream file(path);
         if (!file.is_open() )
             return;
@@ -4117,11 +4410,36 @@ private:
         for (const auto& j : junctions) {
             file << j.x << " " << j.y << "\n";
         }
-
+        int simCode = 0;
+        if (simulationStatus == SimulationState::RUNNING) simCode = 1;
+        else if (simulationStatus == SimulationState::PAUSED) simCode = 2;
+        file << "SIM_STATUS " << simCode << " " << simulationTime << "\n";
         file.close();
     }
 
-    bool loadProjectFromFile(const string& path) {
+    bool saveCurrentProject() {
+        if (projectFilePath.empty()) {
+            string targetPath = chooseProjectSavePath();
+            if (targetPath.empty()) return false;
+            projectFilePath = targetPath;
+        }
+        writeProjectData(projectFilePath);
+        addToRecent(project(projNameFromPath(projectFilePath), projectFilePath, gDate(), canvasWidth, canvasHeight, activeComps));
+        cout << "Project saved: " << projectFilePath << endl;
+        return true;
+    }
+
+    bool saveProjectCopy() {
+        string targetPath = chooseProjectSavePath();
+        if (targetPath.empty()) return false;
+        projectFilePath = targetPath;
+        writeProjectData(projectFilePath);
+        addToRecent(project(projNameFromPath(projectFilePath), projectFilePath, gDate(), canvasWidth, canvasHeight, activeComps));
+        cout << "Project saved as: " << projectFilePath << endl;
+        return true;
+    }
+
+    bool readProjectData(const string& path) {
         ifstream file (path);
         if (!file.is_open())
             return false;
@@ -4195,7 +4513,21 @@ private:
                 junctions.push_back(pt);
             }
         }
+        simulationStatus = SimulationState::STOPPED;
+        simulationTime = 0;
+        string stateTag;
+        if (file >> stateTag) {
+            if (stateTag == "SIM_STATUS") {
+                int simCode = 0;
+                Uint32 savedTime = 0;
+                file >> simCode >> savedTime;
+                simulationTime = savedTime;
+                if (simCode == 1) simulationStatus = SimulationState::RUNNING;
+                else if (simCode == 2) simulationStatus = SimulationState::PAUSED;
+            }
+        }
         file.close();
+        lastRealTimeTick = SDL_GetTicks();
         selectedIndices .clear();
         editingIndex = -1;
         lastClickedIndex = -1;
@@ -4230,6 +4562,7 @@ public:
         btnStop = nullptr;
         btnSingleStep = nullptr;
         btnVoltageProbe = nullptr;
+        btnWavePanel = nullptr;
         btnRemRecents = nullptr ;
         penProjectName = "Untitled";
         grdSz = 20;
@@ -4252,7 +4585,7 @@ public:
         showLib = false;
         showProp = false;
         activeCompsY = 0;
-        currentProjectPath = "";
+        projectFilePath = "";
         draggingComponents =false;
         drawingSelection = false;
         selectionRect = {0,0,0,0};
@@ -4274,6 +4607,19 @@ public:
         simulationStatus = SimulationState::STOPPED;
         simulationTime = 0;
         lastRealTimeTick = 0;
+        wavePanelOpen = false;
+        wavePickChannel = -1;
+        waveWireChoice = {-1, -1};
+        waveTimeDiv = 50.0;
+        waveVoltDiv = {1.0, 1.0};
+        waveLastMark = {std::numeric_limits<Uint32>::max(), std::numeric_limits<Uint32>::max()};
+        wavePanelBox = {0,0,0,0};
+        waveCh1Box = {0,0,0,0};
+        waveCh2Box = {0,0,0,0};
+        waveTimeBox = {0,0,0,0};
+        waveV1Box = {0,0,0,0};
+        waveV2Box = {0,0,0,0};
+        waveCloseBox = {0,0,0,0};
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
         for (size_t i=0; i<libItms.size(); i++) {
             libRcts.push_back({5, tlbrH + 55 + (int)i*40, pnlLW-10, 28});
@@ -4288,6 +4634,7 @@ public:
         libCategories.push_back(tree("Interactive", {"Switch","Push Button","Potentiometer"}));
         libCategories.push_back(tree("Digital Logic", {"AND Gate","OR Gate","NOT Gate","NAND Gate","XOR Gate","D Flip-Flop"}));
         libCategories.push_back(tree("Display", {"LED","7-Segment"}));
+        libCategories.push_back(tree("Measurement", {"Voltmeter","Ammeter"}));
         vector<string> advancedComponentNames;
         advancedComponentNames.push_back("ADC");
         advancedComponentNames.push_back("DAC");
@@ -4320,6 +4667,7 @@ public:
         delete btnStop;
         delete btnSingleStep;
         delete btnVoltageProbe;
+        delete btnWavePanel;
         delete searchBox;
         delete propLabelInput ;
         delete propValueInput;
@@ -4393,6 +4741,7 @@ public:
         btnStop = new BUTTONS(renderer, font, 270, 42, 60, 24, {245,170,170,255}, {230,135,135,255}, "Stop");
         btnSingleStep = new BUTTONS(renderer, font, 340, 42, 60, 24, {190,210,245,255}, {160,190,235,255}, "Step");
         btnVoltageProbe = new BUTTONS(renderer, font, 410, 42, 80, 24, {225,235,250,255}, {195,215,245,255}, "Probe");
+        btnWavePanel = new BUTTONS(renderer, font, 500, 42, 80, 24, {220,225,240,255}, {195,205,235,255}, "Scope");
         int xpos= 120;
         tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos += 80;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
@@ -4462,10 +4811,10 @@ public:
                     currentState = app::NEW_PROJECT_DIALOG;
                 }
                 else if (btnOpenP->click(ev)){
-                    string chosen = fileDialog();
+                    string chosen = chooseProjectToOpen();
                     if (!chosen.empty()) {
-                        if (loadProjectFromFile (chosen)) {
-                            currentProjectPath = chosen;
+                        if (readProjectData (chosen)) {
+                            projectFilePath = chosen;
                             fitWindowToCanvas() ;
                             SDL_SetWindowMinimumSize (window, 400, 300);
                             SDL_SetWindowMaximumSize (window, 0, 0);
@@ -4490,8 +4839,8 @@ public:
                         if (btnRecents [i]->click(ev)) {
                             cout << "Loading project: " << recentPs[i].name << endl;
                             string path= recentPs[i].path;
-                            if (loadProjectFromFile(path)) {
-                                currentProjectPath = path;
+                            if (readProjectData(path)) {
+                                projectFilePath = path;
                             } else {
                                 canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
                                 activeComps = recentPs[i].activeComponents;
@@ -4499,7 +4848,7 @@ public:
                                 runtimeData.clear();
                                 clearDeviceStates();
                                 nextComponentNumber = 1;
-                                currentProjectPath = path;
+                                projectFilePath = path;
                             }
                             fitWindowToCanvas();
                             SDL_SetWindowMinimumSize(window, 400, 300);
@@ -4640,8 +4989,8 @@ public:
                     lastClickTime = 0;
                     updateWorldBounds ();
                     addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
-                    saveProjectToFile (path);
-                    currentProjectPath = path;
+                    writeProjectData (path);
+                    projectFilePath = path;
                     if (txtProjectName)
                         txtProjectName->setActive(false);
                     fitWindowToCanvas ();
@@ -4680,6 +5029,10 @@ public:
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F8) {
                     if (simulationStatus != SimulationState::STOPPED) currentTool = Tool::PROBE;
                 }
+                if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F9) {
+                    wavePanelOpen = !wavePanelOpen;
+                    if (!wavePanelOpen) wavePickChannel = -1;
+                }
                 mouseHandled = false;
 
                 btnBack->events(ev);
@@ -4701,6 +5054,7 @@ public:
                 btnStop->events(ev);
                 btnSingleStep->events(ev);
                 btnVoltageProbe->events(ev);
+                btnWavePanel->events(ev);
 
                 if (!mouseHandled && btnRun->click(ev)) {
                     startSim();
@@ -4720,6 +5074,11 @@ public:
                 }
                 else if (!mouseHandled && btnVoltageProbe->click(ev)) {
                     if (simulationStatus != SimulationState::STOPPED) currentTool = Tool::PROBE;
+                    mouseHandled = true;
+                }
+                else if (!mouseHandled && btnWavePanel->click(ev)) {
+                    wavePanelOpen = !wavePanelOpen;
+                    if (!wavePanelOpen) wavePickChannel = -1;
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && tlbrBtns[0]-> click(ev)) {
@@ -4758,19 +5117,15 @@ public:
                     cout<< "Component Library toggled\n";
                 }
                 else if (!mouseHandled && tlbrBtns [3]->click(ev)){
-                    if (!currentProjectPath.empty()) {
-                        saveProjectToFile (currentProjectPath);
-                        addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
-                        cout << "Project saved.\n";
-                    }
+                    saveCurrentProject();
                     selLibItm = "";
                     mouseHandled = true;
                 }
                 else if(!mouseHandled && tlbrBtns[4]->click(ev)) {
-                    string chosen = fileDialog();
+                    string chosen = chooseProjectToOpen();
                     if (!chosen.empty ()) {
-                        if (loadProjectFromFile(chosen)) {
-                            currentProjectPath = chosen;
+                        if (readProjectData(chosen)) {
+                            projectFilePath = chosen;
                             fitWindowToCanvas();
                             resetLibExpanded();
                             resetView();
@@ -4823,7 +5178,18 @@ public:
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_LEFT && !mouseHandled) {
                     bool canvasClickHandled = false;
                     bool ctrlHeld = SDL_GetModState() &KMOD_CTRL;
-                    if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
+
+                    if (wavePanelOpen && handleWavePanelClick(ev.button.x, ev.button.y)) {
+                        canvasClickHandled = true;
+                        mouseHandled = true;
+                    }
+                    if (!canvasClickHandled && wavePickChannel >= 0 && ev.button.x >= vpX && ev.button.x < vpX + vpW && ev.button.y >= vpY && ev.button.y < vpY + vpH) {
+                        connectWaveChannel(ev.button.x, ev.button.y);
+                        canvasClickHandled = true;
+                        mouseHandled = true;
+                    }
+
+                    if (!canvasClickHandled && showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
                         if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
@@ -5411,19 +5777,19 @@ public:
 
                     if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { undo();}
                     else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { redo(); }
+                    else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL) && (SDL_GetModState() & KMOD_SHIFT)) {
+                        saveProjectCopy();
+                        selLibItm = "";
+                    }
                     else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL)) {
-                        if (!currentProjectPath.empty()) {
-                            saveProjectToFile(currentProjectPath) ;
-                            addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
-                            cout << "Project saved (Ctrl+S).\n";
-                        }
+                        saveCurrentProject();
                         selLibItm = "" ;
                     }
                     else if (ev.key.keysym.sym == SDLK_o && (SDL_GetModState() & KMOD_CTRL)) {
-                        string chosen = fileDialog();
+                        string chosen = chooseProjectToOpen();
                         if (!chosen.empty()) {
-                            if (loadProjectFromFile(chosen)) {
-                                currentProjectPath = chosen;
+                            if (readProjectData(chosen)) {
+                                projectFilePath = chosen;
                                 fitWindowToCanvas() ;
                                 resetLibExpanded ();
                                 resetView();
@@ -5677,9 +6043,10 @@ public:
             btnStop->draw(renderer);
             btnSingleStep->draw(renderer);
             btnVoltageProbe->draw(renderer);
+            btnWavePanel->draw(renderer);
             string simText = "Simulation: " + simulationStateText() +
                              "   Time: " + to_string(simulationTime) + " ms";
-            drawTxt(simText, 415, 45, {20,20,20,255}, libFont);
+            drawTxt(simText, 590, 45, {20,20,20,255}, libFont);
             if (showLib) {
                 SDL_Rect libBg = { 0, tlbrH, pnlLW, vpH};
                 SDL_SetRenderDrawColor(renderer, 235,235,245,255);
@@ -5922,6 +6289,7 @@ public:
             SDL_RenderSetClipRect( renderer, nullptr);
 
             drawProbeValue();
+            drawWavePanel();
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
         }
