@@ -3010,6 +3010,40 @@ private:
         cerr << textValue << endl;
     }
 
+    bool inputPinConnected(SDL_Point pinPoint, size_t ownerIndex) const {
+        for (const vector<SDL_Point>& wirePath : wires) {
+            for (size_t segmentIndex = 0; segmentIndex + 1 < wirePath.size(); ++segmentIndex) {
+                if (pointToSegmentDist(pinPoint.x, pinPoint.y,
+                    wirePath[segmentIndex].x, wirePath[segmentIndex].y,
+                    wirePath[segmentIndex + 1].x, wirePath[segmentIndex + 1].y) < 0.75f) return true;
+            }
+        }
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            if (componentIndex == ownerIndex) continue;
+            vector<SDL_Point> otherPins = gCompPinPos(placedComponents[componentIndex]);
+            for (const SDL_Point& otherPin : otherPins) {
+                if (otherPin.x == pinPoint.x && otherPin.y == pinPoint.y) return true;
+            }
+        }
+        return false;
+    }
+
+    bool scanOpenInputs(vector<string>& issueList) const {
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            const placedComp& item = placedComponents[componentIndex];
+            vector<LocalPin> pinLayout = ComponentLibrary::getComponentInfo(item.name).getPinLayout(item.inputCountValue);
+            vector<SDL_Point> pinPositions = gCompPinPos(item);
+            size_t pinCount = min(pinLayout.size(), pinPositions.size());
+            for (size_t pinIndex = 0; pinIndex < pinCount; ++pinIndex) {
+                if (pinLayout[pinIndex].kind != PinKind::INPUT) continue;
+                if (inputPinConnected(pinPositions[pinIndex], componentIndex)) continue;
+                string shownName = item.label.empty() ? item.name : item.label;
+                issueList.push_back("DRC ERROR: Floating input on " + shownName + " (pin " + to_string(pinIndex + 1) + ").");
+            }
+        }
+        return issueList.empty();
+    }
+
     string simulationStateText() const {
         if (simulationStatus == SimulationState::RUNNING) return "RUN";
         if (simulationStatus == SimulationState::PAUSED) return "PAUSE";
@@ -3028,13 +3062,14 @@ private:
             simulationLogLines.clear();
             vector<string> detectedIssues;
             scanVoltageConflicts(detectedIssues);
+            scanOpenInputs(detectedIssues);
             if (!detectedIssues.empty()) {
                 for (const string& issueText : detectedIssues) pushRuleMessage(issueText);
                 pushRuleMessage("Simulation blocked by DRC.");
                 simulationTime = 0;
                 return;
             }
-            pushRuleMessage("DRC: no short circuit found.");
+            pushRuleMessage("DRC: no short circuit or floating input found.");
             simulationTime = 0;
             resetSimulationValues();
             resetWaveHistory();
@@ -3084,13 +3119,14 @@ private:
             simulationLogLines.clear();
             vector<string> detectedIssues;
             scanVoltageConflicts(detectedIssues);
+            scanOpenInputs(detectedIssues);
             if (!detectedIssues.empty()) {
                 for (const string& issueText : detectedIssues) pushRuleMessage(issueText);
                 pushRuleMessage("Step blocked by DRC.");
                 simulationTime = 0;
                 return;
             }
-            pushRuleMessage("DRC: no short circuit found. Step mode is ready.");
+            pushRuleMessage("DRC: no short circuit or floating input found. Step mode is ready.");
             simulationTime = 0;
             resetSimulationValues();
         }
