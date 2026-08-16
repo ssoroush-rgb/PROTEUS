@@ -14,6 +14,11 @@
 #include <ctime>
 #include <windows.h>
 #include <commdlg.h>
+#include <objidl.h>
+#include <propidl.h>
+#include <gdiplus.h>
+#include <shellapi.h>
+#include <cwchar>
 #include <memory>
 #include <unordered_map>
 #include <map>
@@ -1765,6 +1770,7 @@ private:
     BUTTONS* btnSingleStep;
     BUTTONS* btnVoltageProbe;
     BUTTONS* btnWavePanel;
+    BUTTONS* btnSnapshot;
     int canvasWidth;
     int canvasHeight;
     string penProjectName;
@@ -1811,6 +1817,7 @@ private:
     bool showProp;
     int activeCompsY;
     string projectFilePath;
+    string queuedSnapshotPath;
 
     vector <placedComp> placedComponents;
 
@@ -4439,6 +4446,83 @@ private:
         return true;
     }
 
+    string pickSnapshotPath() {
+        char filename[MAX_PATH] = "circuit.png";
+        OPENFILENAMEA chooser;
+        ZeroMemory(&chooser, sizeof(chooser));
+        chooser.lStructSize = sizeof(chooser);
+        chooser.hwndOwner = NULL;
+        chooser.lpstrFilter = "PNG Image\0*.png\0All Files\0*.*\0";
+        chooser.lpstrFile = filename;
+        chooser.nMaxFile = MAX_PATH;
+        chooser.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+        chooser.lpstrDefExt = "png";
+        return GetSaveFileNameA(&chooser) ? string(filename) : string();
+    }
+
+    int locatePngCodec(CLSID* codecId) const {
+        UINT codecCount = 0;
+        UINT bufferSize = 0;
+        Gdiplus::GetImageEncodersSize(&codecCount, &bufferSize);
+        if (bufferSize == 0) return -1;
+        vector<BYTE> codecBuffer(bufferSize);
+        Gdiplus::ImageCodecInfo* codecList = reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecBuffer.data());
+        if (Gdiplus::GetImageEncoders(codecCount, bufferSize, codecList) != Gdiplus::Ok) return -1;
+        for (UINT codecIndex = 0; codecIndex < codecCount; ++codecIndex) {
+            if (codecList[codecIndex].MimeType && wcscmp(codecList[codecIndex].MimeType, L"image/png") == 0) {
+                *codecId = codecList[codecIndex].Clsid;
+                return static_cast<int>(codecIndex);
+            }
+        }
+        return -1;
+    }
+
+    wstring widenSnapshotPath(const string& path) const {
+        int required = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
+        if (required <= 0) return L"";
+        vector<wchar_t> converted(static_cast<size_t>(required));
+        MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, converted.data(), required);
+        return wstring(converted.data());
+    }
+
+    bool saveCanvasSnapshot(const string& path) {
+        if (!renderer || vpW <= 0 || vpH <= 0) return false;
+        SDL_Rect area = {vpX, vpY, vpW, vpH};
+        vector<Uint32> pixelBuffer(static_cast<size_t>(vpW) * static_cast<size_t>(vpH));
+        if (SDL_RenderReadPixels(renderer, &area, SDL_PIXELFORMAT_ARGB8888,
+                                 pixelBuffer.data(), vpW * static_cast<int>(sizeof(Uint32))) != 0) {
+            cerr << "Export failed: " << SDL_GetError() << endl;
+            return false;
+        }
+        Gdiplus::GdiplusStartupInput startupInfo;
+        ULONG_PTR gdiplusToken = 0;
+        if (Gdiplus::GdiplusStartup(&gdiplusToken, &startupInfo, nullptr) != Gdiplus::Ok) {
+            cerr << "Export failed: GDI+ could not start." << endl;
+            return false;
+        }
+        Gdiplus::Bitmap snapshot(vpW, vpH, vpW * static_cast<int>(sizeof(Uint32)),
+                                 Gdiplus::PixelFormat32bppARGB, reinterpret_cast<BYTE*>(pixelBuffer.data()));
+        CLSID pngCodec;
+        bool saved = false;
+        if (locatePngCodec(&pngCodec) >= 0) {
+            wstring widePath = widenSnapshotPath(path);
+            if (!widePath.empty() && snapshot.Save(widePath.c_str(), &pngCodec, nullptr) == Gdiplus::Ok) saved = true;
+        }
+        Gdiplus::GdiplusShutdown(gdiplusToken);
+        if (saved) {
+            cout << "Circuit image exported: " << path << endl;
+            ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        } else {
+            cerr << "Could not save PNG image." << endl;
+        }
+        return saved;
+    }
+
+    void queueCanvasSnapshot() {
+        string chosenPath = pickSnapshotPath();
+        if (!chosenPath.empty()) queuedSnapshotPath = chosenPath;
+    }
+
     bool readProjectData(const string& path) {
         ifstream file (path);
         if (!file.is_open())
@@ -4563,6 +4647,7 @@ public:
         btnSingleStep = nullptr;
         btnVoltageProbe = nullptr;
         btnWavePanel = nullptr;
+        btnSnapshot = nullptr;
         btnRemRecents = nullptr ;
         penProjectName = "Untitled";
         grdSz = 20;
@@ -4586,6 +4671,7 @@ public:
         showProp = false;
         activeCompsY = 0;
         projectFilePath = "";
+        queuedSnapshotPath = "";
         draggingComponents =false;
         drawingSelection = false;
         selectionRect = {0,0,0,0};
@@ -4668,6 +4754,7 @@ public:
         delete btnSingleStep;
         delete btnVoltageProbe;
         delete btnWavePanel;
+        delete btnSnapshot;
         delete searchBox;
         delete propLabelInput ;
         delete propValueInput;
@@ -4742,6 +4829,7 @@ public:
         btnSingleStep = new BUTTONS(renderer, font, 340, 42, 60, 24, {190,210,245,255}, {160,190,235,255}, "Step");
         btnVoltageProbe = new BUTTONS(renderer, font, 410, 42, 80, 24, {225,235,250,255}, {195,215,245,255}, "Probe");
         btnWavePanel = new BUTTONS(renderer, font, 500, 42, 80, 24, {220,225,240,255}, {195,205,235,255}, "Scope");
+        btnSnapshot = new BUTTONS(renderer, font, 590, 42, 80, 24, {225,240,225,255}, {195,225,195,255}, "Export");
         int xpos= 120;
         tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos += 80;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
@@ -5055,6 +5143,7 @@ public:
                 btnSingleStep->events(ev);
                 btnVoltageProbe->events(ev);
                 btnWavePanel->events(ev);
+                btnSnapshot->events(ev);
 
                 if (!mouseHandled && btnRun->click(ev)) {
                     startSim();
@@ -5079,6 +5168,10 @@ public:
                 else if (!mouseHandled && btnWavePanel->click(ev)) {
                     wavePanelOpen = !wavePanelOpen;
                     if (!wavePanelOpen) wavePickChannel = -1;
+                    mouseHandled = true;
+                }
+                else if (!mouseHandled && btnSnapshot->click(ev)) {
+                    queueCanvasSnapshot();
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && tlbrBtns[0]-> click(ev)) {
@@ -5785,6 +5878,9 @@ public:
                         saveCurrentProject();
                         selLibItm = "" ;
                     }
+                    else if (ev.key.keysym.sym == SDLK_e && (SDL_GetModState() & KMOD_CTRL)) {
+                        queueCanvasSnapshot();
+                    }
                     else if (ev.key.keysym.sym == SDLK_o && (SDL_GetModState() & KMOD_CTRL)) {
                         string chosen = chooseProjectToOpen();
                         if (!chosen.empty()) {
@@ -6044,9 +6140,10 @@ public:
             btnSingleStep->draw(renderer);
             btnVoltageProbe->draw(renderer);
             btnWavePanel->draw(renderer);
+            btnSnapshot->draw(renderer);
             string simText = "Simulation: " + simulationStateText() +
                              "   Time: " + to_string(simulationTime) + " ms";
-            drawTxt(simText, 590, 45, {20,20,20,255}, libFont);
+            drawTxt(simText, 680, 45, {20,20,20,255}, libFont);
             if (showLib) {
                 SDL_Rect libBg = { 0, tlbrH, pnlLW, vpH};
                 SDL_SetRenderDrawColor(renderer, 235,235,245,255);
@@ -6292,6 +6389,12 @@ public:
             drawWavePanel();
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
+        }
+
+        if (!queuedSnapshotPath.empty() && currentState == app::WORKSPACE) {
+            string pathToWrite = queuedSnapshotPath;
+            queuedSnapshotPath.clear();
+            saveCanvasSnapshot(pathToWrite);
         }
 
         SDL_RenderPresent(renderer);
