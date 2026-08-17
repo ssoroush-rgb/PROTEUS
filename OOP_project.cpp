@@ -14,6 +14,11 @@
 #include <ctime>
 #include <windows.h>
 #include <commdlg.h>
+#include <objidl.h>
+#include <propidl.h>
+#include <gdiplus.h>
+#include <shellapi.h>
+#include <cwchar>
 #include <memory>
 #include <unordered_map>
 #include <map>
@@ -1188,6 +1193,12 @@ public:
         : FixedPinComponent(std::move(name), "Display", std::move(value), std::move(pins)) {}
 };
 
+class MeterComponent : public FixedPinComponent {
+public:
+    MeterComponent(string name, string value, vector<LocalPin> pins)
+        : FixedPinComponent(std::move(name), "Measurement", std::move(value), std::move(pins)) {}
+};
+
 class LogicGateComponent : public Component {
 public:
     LogicGateComponent(string name, string value)
@@ -1335,6 +1346,9 @@ public:
             {18,-14,PinKind::INPUT},{18,-6,PinKind::INPUT},{18,2,PinKind::INPUT},{18,10,PinKind::INPUT}
         });
 
+        static MeterComponent voltageMeter("Voltmeter", "range=20", {{-32,0,PinKind::INPUT},{32,0,PinKind::INPUT}});
+        static MeterComponent currentMeter("Ammeter", "shunt=0.01", {{-32,0,PinKind::PASSIVE},{32,0,PinKind::PASSIVE}});
+
         static LogicGateComponent andGate("AND Gate", "inputs=2;delay=10");
         static LogicGateComponent orGate("OR Gate", "inputs=2;delay=10");
         static LogicGateComponent notGateValue("NOT Gate", "delay=10");
@@ -1366,6 +1380,8 @@ public:
         if (name == "Potentiometer") return dial;
         if (name == "LED") return led;
         if (name == "7-Segment") return seven;
+        if (name == "Voltmeter") return voltageMeter;
+        if (name == "Ammeter") return currentMeter;
         if (name == "AND Gate") return andGate;
         if (name == "OR Gate") return orGate;
         if (name == "NOT Gate") return notGateValue;
@@ -1753,6 +1769,8 @@ private:
     BUTTONS* btnStop;
     BUTTONS* btnSingleStep;
     BUTTONS* btnVoltageProbe;
+    BUTTONS* btnWavePanel;
+    BUTTONS* btnSnapshot;
     int canvasWidth;
     int canvasHeight;
     string penProjectName;
@@ -1798,7 +1816,8 @@ private:
     bool showLib;
     bool showProp;
     int activeCompsY;
-    string currentProjectPath;
+    string projectFilePath;
+    string queuedSnapshotPath;
 
     vector <placedComp> placedComponents;
 
@@ -1832,6 +1851,7 @@ private:
         LogicLevel previousClockLevel = LogicLevel::LOW;
         bool ledState = false;
         vector<bool> segmentStateList = vector<bool>(8, false);
+        double meterReading = std::numeric_limits<double>::quiet_NaN();
     };
 
     unordered_map<int, ComponentRuntime> runtimeData;
@@ -1851,6 +1871,21 @@ private:
     SimulationState simulationStatus;
     Uint32 simulationTime;
     Uint32 lastRealTimeTick;
+
+    bool wavePanelOpen;
+    int wavePickChannel;
+    array<int, 2> waveWireChoice;
+    array<vector<pair<Uint32, double>>, 2> waveHistory;
+    array<Uint32, 2> waveLastMark;
+    double waveTimeDiv;
+    array<double, 2> waveVoltDiv;
+    SDL_Rect wavePanelBox;
+    SDL_Rect waveCh1Box;
+    SDL_Rect waveCh2Box;
+    SDL_Rect waveTimeBox;
+    SDL_Rect waveV1Box;
+    SDL_Rect waveV2Box;
+    SDL_Rect waveCloseBox;
     void updateWorldBounds() {
         worldMinX = -canvasWidth/ 2;
         worldMaxX = canvasWidth/ 2;
@@ -1889,7 +1924,7 @@ private:
         updateViewport();
     }
 
-    float pointToSegmentDist(int px, int py, int x1, int y1, int x2, int y2) {
+    float pointToSegmentDist(int px, int py, int x1, int y1, int x2, int y2) const {
         float dx = x2 - x1, dy = y2 - y1;
         if (dx == 0 && dy == 0) return sqrt((px-x1)*(px-x1) + (py-y1)*(py-y1));
         float t = ((px - x1)*dx + (py - y1)*dy) / (dx*dx + dy*dy);
@@ -2020,6 +2055,7 @@ private:
         if (comp.name == "LCD 16x2") return {72, 38};
         if (comp.name == "Keypad 4x4") return {48, 38};
         if (comp.name == "ADC" || comp.name == "DAC") return {56, 42};
+        if (comp.name == "Voltmeter" || comp.name == "Ammeter") return {44, 24};
         return {40, 20};
     }
 
@@ -2093,9 +2129,9 @@ private:
         SDL_RenderDrawLines(renderer, outline,5);
     }
 
-    enum UndoType {COMP_PLACE, COMP_DELETE , COMP_MOVE, ACTIVE_ADD, ACTIVE_REMOVE, COMP_EDIT, COMP_TRANSFORM,WIRE_ADD, WIRE_DELETE, WIRE_JUNCTION_ADD, WIRE_JUNCTION_REMOVE};
-    struct UndoAction{
-        UndoType type;
+    enum HistoryKind {PLACE_ITEM, DELETE_ITEM , MOVE_ITEM, LIB_ADD, LIB_REMOVE, EDIT_ITEM, TRANSFORM_ITEM,ADD_WIRE, DELETE_WIRE, ADD_JUNCTION, REMOVE_JUNCTION};
+    struct HistoryEntry{
+        HistoryKind type;
         placedComp comp;
         placedComp oldComp;
         string compName;
@@ -2108,8 +2144,8 @@ private:
         vector<SDL_Point> junctionsAfter;
         SDL_Point junctionPoint;
     };
-    vector<UndoAction> undoStack;
-    vector<UndoAction> redoStack;
+    vector<HistoryEntry> historyBack;
+    vector<HistoryEntry> historyForward;
 
     txtIn* propLabelInput;
     txtIn* propValueInput;
@@ -2119,16 +2155,16 @@ private:
     size_t lastClickedIndex;
     Uint32 lastClickTime;
 
-    void pushUndo (const UndoAction& action){
-        undoStack.push_back(action);
-        redoStack.clear();
+    void rememberChange (const HistoryEntry& action){
+        historyBack.push_back(action);
+        historyForward.clear();
     }
 
-    void undo() {
-        if (undoStack.empty()) return;
-        UndoAction act = undoStack.back();
-        undoStack.pop_back();
-        if (act.type ==COMP_PLACE) {
+    void stepHistoryBack() {
+        if (historyBack.empty()) return;
+        HistoryEntry act = historyBack.back();
+        historyBack.pop_back();
+        if (act.type ==PLACE_ITEM) {
             for (size_t i = 0; i < placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents. erase(placedComponents.begin() + i);
@@ -2137,45 +2173,45 @@ private:
             }
             wires = act.wiresBefore;
             junctions =act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type== COMP_DELETE) {
+        else if (act.type== DELETE_ITEM) {
             placedComponents.push_back(act.comp);
             wires = act.wiresBefore;
             junctions = act.junctionsBefore;
-            redoStack.push_back(act) ;
+            historyForward.push_back(act) ;
         }
-        else if (act.type == ACTIVE_ADD) {
+        else if (act.type == LIB_ADD) {
             auto it = find(activeComps.begin( ), activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 activeComps.erase(it);
-                UndoAction redoAct;
-                redoAct.type = ACTIVE_ADD ;
-                redoAct.compName = act.compName;
-                redoStack.push_back(redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = LIB_ADD ;
+                forwardEntry.compName = act.compName;
+                historyForward.push_back(forwardEntry);
             }
         }
-        else if (act.type == ACTIVE_REMOVE) {
+        else if (act.type == LIB_REMOVE) {
             if (act.activeIndex >= 0 && act.activeIndex<= (int)activeComps.size()) {
                 activeComps.insert(activeComps.begin() + act.activeIndex, act.compName);
-                UndoAction redoAct;
-                redoAct.type = ACTIVE_REMOVE;
-                redoAct.compName = act.compName;
-                redoAct.activeIndex = act.activeIndex;
-                redoStack.push_back(redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = LIB_REMOVE;
+                forwardEntry.compName = act.compName;
+                forwardEntry.activeIndex = act.activeIndex;
+                historyForward.push_back(forwardEntry);
             }
         }
-        else if (act.type == COMP_MOVE){
+        else if (act.type == MOVE_ITEM){
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM) {
+        else if (act.type == TRANSFORM_ITEM) {
             placedComponents = act.compsBefore;
             wires = act.wiresBefore;
-            redoStack.push_back (act);
+            historyForward.push_back (act);
         }
-        else if (act.type == COMP_EDIT) {
+        else if (act.type == EDIT_ITEM) {
             size_t idx = -1;
             for(size_t i = 0; i < placedComponents.size(); ++i){
                 if (placedComponents[i].name== act.comp.name && placedComponents[i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
@@ -2185,44 +2221,44 @@ private:
             }
             if (idx < placedComponents.size() ) {
                 placedComponents[idx] = act.oldComp;
-                UndoAction redoAct;
-                redoAct.type = COMP_EDIT;
-                redoAct.oldComp = act.oldComp;
-                redoAct.comp = act.comp;
-                redoStack.push_back (redoAct);
+                HistoryEntry forwardEntry;
+                forwardEntry.type = EDIT_ITEM;
+                forwardEntry.oldComp = act.oldComp;
+                forwardEntry.comp = act.comp;
+                historyForward.push_back (forwardEntry);
             }
         }
-        else if (act.type == WIRE_ADD) {
+        else if (act.type == ADD_WIRE) {
             wires = act.wiresBefore;
             junctions = act.junctionsBefore ;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == WIRE_DELETE) {
+        else if (act.type == DELETE_WIRE) {
             wires = act.wiresBefore;
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type== WIRE_JUNCTION_ADD) {
+        else if (act.type== ADD_JUNCTION) {
             junctions = act.junctionsBefore;
-            redoStack.push_back(act);
+            historyForward.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_REMOVE) {
+        else if (act.type == REMOVE_JUNCTION) {
             junctions = act.junctionsBefore;
-            redoStack.push_back (act);
+            historyForward.push_back (act);
         }
     }
 
-    void redo() {
-        if (redoStack.empty()) return;
-        UndoAction act = redoStack.back();
-        redoStack.pop_back();
-        if (act.type == COMP_PLACE){
+    void stepHistoryForward() {
+        if (historyForward.empty()) return;
+        HistoryEntry act = historyForward.back();
+        historyForward.pop_back();
+        if (act.type == PLACE_ITEM){
             placedComponents.push_back(act.comp) ;
             wires = act.wiresAfter;
             junctions= act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_DELETE) {
+        else if (act.type == DELETE_ITEM) {
             for(size_t i = 0; i< placedComponents.size(); ++i) {
                 if (placedComponents[i].name == act.comp.name && placedComponents [i].x == act.comp.x && placedComponents[i].y == act.comp.y) {
                     placedComponents.erase(placedComponents.begin()+ i);
@@ -2231,38 +2267,38 @@ private:
             }
             wires = act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == ACTIVE_ADD) {
+        else if (act.type == LIB_ADD) {
             activeComps.push_back(act.compName);
-            UndoAction undoAct;
-            undoAct.type =ACTIVE_ADD;
-            undoAct.compName = act.compName;
-            undoStack.push_back (undoAct);
+            HistoryEntry backEntry;
+            backEntry.type =LIB_ADD;
+            backEntry.compName = act.compName;
+            historyBack.push_back (backEntry);
         }
-        else if (act.type == ACTIVE_REMOVE) {
+        else if (act.type == LIB_REMOVE) {
             auto it = find(activeComps.begin() , activeComps.end(), act.compName);
             if (it != activeComps.end()) {
                 int idx = it - activeComps.begin();
                 activeComps.erase(it );
-                UndoAction undoAct;
-                undoAct.type = ACTIVE_REMOVE;
-                undoAct.compName = act.compName;
-                undoAct.activeIndex = idx;
-                undoStack.push_back(undoAct);
+                HistoryEntry backEntry;
+                backEntry.type = LIB_REMOVE;
+                backEntry.compName = act.compName;
+                backEntry.activeIndex = idx;
+                historyBack.push_back(backEntry);
             }
         }
-        else if (act.type ==COMP_MOVE) {
+        else if (act.type ==MOVE_ITEM) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_TRANSFORM ) {
+        else if (act.type == TRANSFORM_ITEM ) {
             placedComponents = act.compsAfter;
             wires = act.wiresAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == COMP_EDIT) {
+        else if (act.type == EDIT_ITEM) {
             size_t idx =-1;
             for (size_t i = 0; i < placedComponents.size();++i) {
                 if (placedComponents[i].name == act.oldComp.name && placedComponents[i] .x == act.oldComp.x && placedComponents[i].y == act.oldComp.y) {
@@ -2272,26 +2308,26 @@ private:
             }
             if (idx < placedComponents.size()){
                 placedComponents[idx] = act.comp;
-                undoStack.push_back(act);
+                historyBack.push_back(act);
             }
         }
-        else if (act.type == WIRE_ADD) {
+        else if (act.type == ADD_WIRE) {
             wires =act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == WIRE_DELETE) {
+        else if (act.type == DELETE_WIRE) {
             wires = act.wiresAfter;
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if (act.type == WIRE_JUNCTION_ADD){
+        else if (act.type == ADD_JUNCTION){
             junctions = act .junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
-        else if ( act.type == WIRE_JUNCTION_REMOVE) {
+        else if ( act.type == REMOVE_JUNCTION) {
             junctions = act.junctionsAfter;
-            undoStack.push_back(act);
+            historyBack.push_back(act);
         }
     }
 
@@ -2332,29 +2368,48 @@ private:
     }
 
     void drawStatusBar() {
-        SDL_Rect bar ={0, winH - statH,winW, statH};
-        SDL_SetRenderDrawColor(renderer, 60, 60,60,255);
-        SDL_RenderFillRect(renderer, &bar);
-        if (mseX >= vpX && mseX < vpX+vpW && mseY >= vpY && mseY < vpY+vpH) {
-            int wx = scrToWldX(mseX) , wy= scrToWldY(mseY);
-            string txt = "X: " + to_string(wx)+ "  Y: " + to_string(wy);
-            drawTxt(txt, 10, winH - statH + 5, {220,220,220,255});
-        }
-        else {
-            drawTxt("Move mouse over canvas", 10, winH - statH + 5, {180,180,180,255});
+        int panelTop = winH - statH;
+        SDL_Rect panelRect = {0, panelTop, winW, statH};
+        SDL_SetRenderDrawColor(renderer, 28, 31, 36, 255);
+        SDL_RenderFillRect(renderer, &panelRect);
+        SDL_SetRenderDrawColor(renderer, 90, 95, 105, 255);
+        SDL_RenderDrawLine(renderer, 0, panelTop, winW, panelTop);
+        drawTxt("Simulation Log", 10, panelTop + 5, {230,230,235,255}, libFont);
+
+        int lineHeight = 17;
+        int maximumLines = max(1, (statH - 43) / lineHeight);
+        int firstLine = max(0, static_cast<int>(simulationLogLines.size()) - maximumLines);
+        int textY = panelTop + 24;
+        for (int lineIndex = firstLine; lineIndex < static_cast<int>(simulationLogLines.size()); ++lineIndex) {
+            string shownLine = simulationLogLines[static_cast<size_t>(lineIndex)];
+            if (shownLine.size() > 135) shownLine = shownLine.substr(0, 132) + "...";
+            SDL_Color textColor = {205,205,210,255};
+            string lowerLine = toLower(shownLine);
+            if (lowerLine.find("error") != string::npos || lowerLine.find("blocked") != string::npos ||
+                lowerLine.find("floating") != string::npos || lowerLine.find("short circuit") != string::npos) {
+                textColor = {255,120,105,255};
+            } else if (lowerLine.find("no errors") != string::npos || lowerLine.find("ready") != string::npos) {
+                textColor = {125,235,145,255};
+            } else if (lowerLine.find("paused") != string::npos || lowerLine.find("step") != string::npos) {
+                textColor = {255,210,115,255};
+            }
+            drawTxt(shownLine, 12, textY, textColor, libFont);
+            textY += lineHeight;
         }
 
-        if (!simulationLogLines.empty()) {
-            drawTxt(simulationLogLines.back(), 185, winH - statH + 5, {255,190,70,255}, libFont);
+        string mouseText = "Mouse: ";
+        if (mseX >= vpX && mseX < vpX + vpW && mseY >= vpY && mseY < vpY + vpH) {
+            mouseText += "X=" + to_string(scrToWldX(mseX)) + " Y=" + to_string(scrToWldY(mseY));
+        } else {
+            mouseText += "outside canvas";
         }
+        drawTxt(mouseText, 10, winH - 18, {170,175,185,255}, libFont);
 
-        string zoomTxt = to_string((int)(zmLvl*100)) + "%" ;
-        int tw, th ;
-        TTF_SizeText(font, zoomTxt.c_str(), &tw, &th) ;
-        int zx = winW - tw - 10 ;
-        int zy = winH - statH + 5 ;
-        zoomRct = {zx - 5, zy - 2, tw + 10, th + 4} ;
-        drawTxt (zoomTxt, zx, zy, {220,220,220,255}) ;
+        string zoomText = "Zoom " + to_string(static_cast<int>(zmLvl * 100)) + "%";
+        int textWidth = 0;
+        int textHeight = 0;
+        if (libFont) TTF_SizeText(libFont, zoomText.c_str(), &textWidth, &textHeight);
+        drawTxt(zoomText, winW - textWidth - 12, winH - 18, {170,175,185,255}, libFont);
     }
 
     void drawTxt(const string& str, int x, int y, SDL_Color color) const {
@@ -2615,6 +2670,414 @@ private:
         drawTxt(text, hintBox.x + 6, hintBox.y + 4, {20,20,20,255}, libFont);
     }
 
+    string waveScaleText(double value) const {
+        stringstream stream;
+        if (std::fabs(value - std::round(value)) < 0.0001) stream << (int)std::round(value);
+        else stream << fixed << setprecision(1) << value;
+        return stream.str();
+    }
+
+    void setWavePanelRects() {
+        int panelWidth = std::min(540, std::max(430, winW - 40));
+        int panelHeight = 300;
+        int panelX = std::max(10, winW - panelWidth - 15);
+        int panelY = std::max(tlbrH + 10, 85);
+        wavePanelBox = {panelX, panelY, panelWidth, panelHeight};
+        waveCloseBox = {panelX + panelWidth - 58, panelY + 8, 48, 22};
+        waveCh1Box = {panelX + 12, panelY + 38, 88, 24};
+        waveCh2Box = {panelX + 108, panelY + 38, 88, 24};
+        waveTimeBox = {panelX + 204, panelY + 38, 104, 24};
+        waveV1Box = {panelX + 316, panelY + 38, 94, 24};
+        waveV2Box = {panelX + 418, panelY + 38, 94, 24};
+    }
+
+    bool pointInside(const SDL_Rect& box, int x, int y) const {
+        return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+    }
+
+    void resetWaveHistory() {
+        for (int channel = 0; channel < 2; ++channel) {
+            waveHistory[channel].clear();
+            waveLastMark[channel] = std::numeric_limits<Uint32>::max();
+        }
+    }
+
+    int wireNearScreenPoint(int screenX, int screenY) {
+        double bestDistance = 10.0;
+        int bestWire = -1;
+        for (size_t wireNumber = 0; wireNumber < wires.size(); ++wireNumber) {
+            const auto& path = wires[wireNumber];
+            for (size_t part = 0; part + 1 < path.size(); ++part) {
+                int x1 = wldToScrX(path[part].x);
+                int y1 = wldToScrY(path[part].y);
+                int x2 = wldToScrX(path[part + 1].x);
+                int y2 = wldToScrY(path[part + 1].y);
+                double distance = pointToSegmentDist(screenX, screenY, x1, y1, x2, y2);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestWire = (int)wireNumber;
+                }
+            }
+        }
+        return bestWire;
+    }
+
+    void cycleWaveTime() {
+        const double choices[] = {10.0, 20.0, 50.0, 100.0, 200.0};
+        int current = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (std::fabs(waveTimeDiv - choices[i]) < 0.001) current = i;
+        }
+        waveTimeDiv = choices[(current + 1) % 5];
+    }
+
+    void cycleWaveVoltage(int channel) {
+        if (channel < 0 || channel > 1) return;
+        const double choices[] = {0.5, 1.0, 2.0, 5.0, 10.0};
+        int current = 0;
+        for (int i = 0; i < 5; ++i) {
+            if (std::fabs(waveVoltDiv[channel] - choices[i]) < 0.001) current = i;
+        }
+        waveVoltDiv[channel] = choices[(current + 1) % 5];
+    }
+
+    bool handleWavePanelClick(int x, int y) {
+        if (!wavePanelOpen) return false;
+        setWavePanelRects();
+        if (!pointInside(wavePanelBox, x, y)) return false;
+
+        if (pointInside(waveCloseBox, x, y)) {
+            wavePanelOpen = false;
+            wavePickChannel = -1;
+            return true;
+        }
+        if (pointInside(waveCh1Box, x, y)) {
+            wavePickChannel = 0;
+            return true;
+        }
+        if (pointInside(waveCh2Box, x, y)) {
+            wavePickChannel = 1;
+            return true;
+        }
+        if (pointInside(waveTimeBox, x, y)) {
+            cycleWaveTime();
+            return true;
+        }
+        if (pointInside(waveV1Box, x, y)) {
+            cycleWaveVoltage(0);
+            return true;
+        }
+        if (pointInside(waveV2Box, x, y)) {
+            cycleWaveVoltage(1);
+            return true;
+        }
+        return true;
+    }
+
+    void connectWaveChannel(int screenX, int screenY) {
+        if (wavePickChannel < 0 || wavePickChannel > 1) return;
+        int wireNumber = wireNearScreenPoint(screenX, screenY);
+        if (wireNumber >= 0) {
+            int channel = wavePickChannel;
+            waveWireChoice[channel] = wireNumber;
+            waveHistory[channel].clear();
+            waveLastMark[channel] = std::numeric_limits<Uint32>::max();
+            simulationLogLines.push_back("Scope CH" + to_string(channel + 1) + " connected to wire " + to_string(wireNumber + 1) + ".");
+            if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
+        }
+        wavePickChannel = -1;
+    }
+
+    void captureWaveData() {
+        if (simulationStatus == SimulationState::STOPPED) return;
+        for (int channel = 0; channel < 2; ++channel) {
+            int wireNumber = waveWireChoice[channel];
+            if (wireNumber < 0 || wireNumber >= (int)wireVoltageValues.size()) continue;
+            if (waveLastMark[channel] == simulationTime) continue;
+            waveLastMark[channel] = simulationTime;
+            waveHistory[channel].push_back({simulationTime, wireVoltageValues[wireNumber]});
+            if (waveHistory[channel].size() > 2000) waveHistory[channel].erase(waveHistory[channel].begin(), waveHistory[channel].begin() + 200);
+        }
+    }
+
+    void drawWaveButton(const SDL_Rect& box, const string& text, SDL_Color fillColor) {
+        SDL_SetRenderDrawColor(renderer, fillColor.r, fillColor.g, fillColor.b, fillColor.a);
+        SDL_RenderFillRect(renderer, &box);
+        SDL_SetRenderDrawColor(renderer, 90, 90, 90, 255);
+        SDL_RenderDrawRect(renderer, &box);
+        int tw = 0;
+        int th = 0;
+        if (libFont) TTF_SizeText(libFont, text.c_str(), &tw, &th);
+        drawTxt(text, box.x + std::max(4, (box.w - tw) / 2), box.y + std::max(2, (box.h - th) / 2), {25,25,25,255}, libFont);
+    }
+
+    void drawWavePanel() {
+        if (!wavePanelOpen) return;
+        setWavePanelRects();
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 245, 247, 250, 248);
+        SDL_RenderFillRect(renderer, &wavePanelBox);
+        SDL_SetRenderDrawColor(renderer, 70, 75, 85, 255);
+        SDL_RenderDrawRect(renderer, &wavePanelBox);
+
+        drawTxt("Oscilloscope", wavePanelBox.x + 12, wavePanelBox.y + 10, {20,20,20,255}, font);
+        drawWaveButton(waveCloseBox, "Close", {235,205,205,255});
+        drawWaveButton(waveCh1Box, wavePickChannel == 0 ? "Pick CH1..." : "Pick CH1", {245,210,210,255});
+        drawWaveButton(waveCh2Box, wavePickChannel == 1 ? "Pick CH2..." : "Pick CH2", {205,220,250,255});
+        drawWaveButton(waveTimeBox, "T/Div " + waveScaleText(waveTimeDiv) + "ms", {230,230,230,255});
+        drawWaveButton(waveV1Box, "CH1 " + waveScaleText(waveVoltDiv[0]) + "V", {245,220,220,255});
+        drawWaveButton(waveV2Box, "CH2 " + waveScaleText(waveVoltDiv[1]) + "V", {220,230,250,255});
+
+        string ch1Name = waveWireChoice[0] >= 0 ? "CH1: Wire " + to_string(waveWireChoice[0] + 1) : "CH1: not connected";
+        string ch2Name = waveWireChoice[1] >= 0 ? "CH2: Wire " + to_string(waveWireChoice[1] + 1) : "CH2: not connected";
+        drawTxt(ch1Name, wavePanelBox.x + 14, wavePanelBox.y + 68, {205,45,45,255}, libFont);
+        drawTxt(ch2Name, wavePanelBox.x + 180, wavePanelBox.y + 68, {45,90,210,255}, libFont);
+
+        SDL_Rect graphBox = {wavePanelBox.x + 14, wavePanelBox.y + 92, wavePanelBox.w - 28, wavePanelBox.h - 106};
+        SDL_SetRenderDrawColor(renderer, 20, 22, 26, 255);
+        SDL_RenderFillRect(renderer, &graphBox);
+        SDL_SetRenderDrawColor(renderer, 65, 70, 75, 255);
+        for (int division = 0; division <= 8; ++division) {
+            int x = graphBox.x + division * graphBox.w / 8;
+            SDL_RenderDrawLine(renderer, x, graphBox.y, x, graphBox.y + graphBox.h);
+        }
+        for (int division = 0; division <= 6; ++division) {
+            int y = graphBox.y + division * graphBox.h / 6;
+            SDL_RenderDrawLine(renderer, graphBox.x, y, graphBox.x + graphBox.w, y);
+        }
+
+        double duration = waveTimeDiv * 8.0;
+        double endTime = (double)simulationTime;
+        double beginTime = std::max(0.0, endTime - duration);
+        SDL_RenderSetClipRect(renderer, &graphBox);
+
+        for (int channel = 0; channel < 2; ++channel) {
+            SDL_Color traceColor = channel == 0 ? SDL_Color{235,70,70,255} : SDL_Color{70,125,245,255};
+            SDL_SetRenderDrawColor(renderer, traceColor.r, traceColor.g, traceColor.b, traceColor.a);
+            bool hasPrevious = false;
+            int previousX = 0;
+            int previousY = 0;
+            for (const auto& sample : waveHistory[channel]) {
+                double timeValue = (double)sample.first;
+                if (timeValue < beginTime || timeValue > endTime) {
+                    hasPrevious = false;
+                    continue;
+                }
+                if (std::isnan(sample.second)) {
+                    hasPrevious = false;
+                    continue;
+                }
+                int x = graphBox.x + (int)std::lround((timeValue - beginTime) * graphBox.w / std::max(1.0, duration));
+                double pixelsPerDiv = graphBox.h / 6.0;
+                int y = graphBox.y + graphBox.h / 2 - (int)std::lround((sample.second / waveVoltDiv[channel]) * pixelsPerDiv);
+                if (hasPrevious) SDL_RenderDrawLine(renderer, previousX, previousY, x, y);
+                previousX = x;
+                previousY = y;
+                hasPrevious = true;
+            }
+        }
+
+        SDL_RenderSetClipRect(renderer, nullptr);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+    }
+
+    bool scanVoltageConflicts(vector<string>& issueList) const {
+        struct NetJoiner {
+            vector<int> parentNode;
+            vector<int> rankValue;
+
+            int createNode() {
+                int nodeId = static_cast<int>(parentNode.size());
+                parentNode.push_back(nodeId);
+                rankValue.push_back(0);
+                return nodeId;
+            }
+
+            int rootOf(int nodeId) {
+                if (parentNode[nodeId] != nodeId) parentNode[nodeId] = rootOf(parentNode[nodeId]);
+                return parentNode[nodeId];
+            }
+
+            void connectNodes(int firstNode, int secondNode) {
+                firstNode = rootOf(firstNode);
+                secondNode = rootOf(secondNode);
+                if (firstNode == secondNode) return;
+                if (rankValue[firstNode] < rankValue[secondNode]) swap(firstNode, secondNode);
+                parentNode[secondNode] = firstNode;
+                if (rankValue[firstNode] == rankValue[secondNode]) rankValue[firstNode]++;
+            }
+        } netJoiner;
+
+        auto coordinateKey = [](int xValue, int yValue) -> int64_t {
+            return static_cast<int64_t>((static_cast<uint64_t>(static_cast<uint32_t>(xValue)) << 32) |
+                                        static_cast<uint32_t>(yValue));
+        };
+
+        unordered_map<int64_t, int> pointNodeMap;
+        auto nodeForPoint = [&](SDL_Point pointValue) -> int {
+            int64_t keyValue = coordinateKey(pointValue.x, pointValue.y);
+            auto foundNode = pointNodeMap.find(keyValue);
+            if (foundNode != pointNodeMap.end()) return foundNode->second;
+            int newNode = netJoiner.createNode();
+            pointNodeMap[keyValue] = newNode;
+            return newNode;
+        };
+
+        vector<vector<SDL_Point>> componentPins(placedComponents.size());
+        vector<vector<int>> componentNodes(placedComponents.size());
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            componentPins[componentIndex] = gCompPinPos(placedComponents[componentIndex]);
+            for (const SDL_Point& pinPoint : componentPins[componentIndex]) {
+                componentNodes[componentIndex].push_back(nodeForPoint(pinPoint));
+            }
+        }
+
+        vector<int> wireNodes(wires.size(), -1);
+        for (size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+            if (wires[wireIndex].empty()) continue;
+            int firstNode = nodeForPoint(wires[wireIndex].front());
+            wireNodes[wireIndex] = firstNode;
+            for (const SDL_Point& wirePoint : wires[wireIndex]) netJoiner.connectNodes(firstNode, nodeForPoint(wirePoint));
+        }
+
+        for (size_t componentIndex = 0; componentIndex < componentPins.size(); ++componentIndex) {
+            for (size_t pinIndex = 0; pinIndex < componentPins[componentIndex].size(); ++pinIndex) {
+                SDL_Point pinPoint = componentPins[componentIndex][pinIndex];
+                for (size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+                    if (wireNodes[wireIndex] < 0) continue;
+                    for (size_t segmentIndex = 0; segmentIndex + 1 < wires[wireIndex].size(); ++segmentIndex) {
+                        if (pointToSegmentDist(pinPoint.x, pinPoint.y,
+                            wires[wireIndex][segmentIndex].x, wires[wireIndex][segmentIndex].y,
+                            wires[wireIndex][segmentIndex + 1].x, wires[wireIndex][segmentIndex + 1].y) < 0.75f) {
+                            netJoiner.connectNodes(componentNodes[componentIndex][pinIndex], wireNodes[wireIndex]);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (const SDL_Point& junctionPoint : junctions) {
+            int junctionNode = nodeForPoint(junctionPoint);
+            for (size_t wireIndex = 0; wireIndex < wires.size(); ++wireIndex) {
+                if (wireNodes[wireIndex] < 0) continue;
+                for (size_t segmentIndex = 0; segmentIndex + 1 < wires[wireIndex].size(); ++segmentIndex) {
+                    if (pointToSegmentDist(junctionPoint.x, junctionPoint.y,
+                        wires[wireIndex][segmentIndex].x, wires[wireIndex][segmentIndex].y,
+                        wires[wireIndex][segmentIndex + 1].x, wires[wireIndex][segmentIndex + 1].y) < 0.75f) {
+                        netJoiner.connectNodes(junctionNode, wireNodes[wireIndex]);
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            const placedComp& item = placedComponents[componentIndex];
+            if (item.name == "Switch" && item.switchClosed && componentNodes[componentIndex].size() >= 2) {
+                netJoiner.connectNodes(componentNodes[componentIndex][0], componentNodes[componentIndex][1]);
+            }
+        }
+
+        struct FixedDrive {
+            int nodeId;
+            double voltageValue;
+            string sourceName;
+        };
+        vector<FixedDrive> fixedDrives;
+
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            const placedComp& item = placedComponents[componentIndex];
+            if (componentNodes[componentIndex].empty()) continue;
+            string shownName = item.label.empty() ? item.name : item.label;
+            if (item.name == "Ground") fixedDrives.push_back({componentNodes[componentIndex][0], 0.0, shownName});
+            else if (item.name == "VCC") fixedDrives.push_back({componentNodes[componentIndex][0], 5.0, shownName});
+            else if (item.name == "DC Voltage Source" || item.name == "Battery") {
+                double sourceVoltage = firstNumber(item.value, item.name == "Battery" ? 9.0 : 5.0);
+                fixedDrives.push_back({componentNodes[componentIndex][0], sourceVoltage, shownName});
+                if (componentNodes[componentIndex].size() > 1) fixedDrives.push_back({componentNodes[componentIndex][1], 0.0, shownName + " negative"});
+            }
+            else if (item.name == "Clock Generator") fixedDrives.push_back({componentNodes[componentIndex][0], 0.0, shownName});
+        }
+
+        map<int, pair<double, string>> firstDriveByNet;
+        set<int> reportedNets;
+        for (const FixedDrive& drive : fixedDrives) {
+            int rootNode = netJoiner.rootOf(drive.nodeId);
+            auto existingDrive = firstDriveByNet.find(rootNode);
+            if (existingDrive == firstDriveByNet.end()) {
+                firstDriveByNet[rootNode] = {drive.voltageValue, drive.sourceName};
+                continue;
+            }
+            if (fabs(existingDrive->second.first - drive.voltageValue) > 0.4 && !reportedNets.count(rootNode)) {
+                stringstream message;
+                message << fixed << setprecision(1)
+                        << "DRC ERROR: Short circuit between " << existingDrive->second.second << " ("
+                        << existingDrive->second.first << " V) and " << drive.sourceName << " ("
+                        << drive.voltageValue << " V).";
+                issueList.push_back(message.str());
+                reportedNets.insert(rootNode);
+            }
+        }
+        return issueList.empty();
+    }
+
+    void pushRuleMessage(const string& textValue) {
+        simulationLogLines.push_back(textValue);
+        if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
+        cerr << textValue << endl;
+    }
+
+    bool inputPinConnected(SDL_Point pinPoint, size_t ownerIndex) const {
+        for (const vector<SDL_Point>& wirePath : wires) {
+            for (size_t segmentIndex = 0; segmentIndex + 1 < wirePath.size(); ++segmentIndex) {
+                if (pointToSegmentDist(pinPoint.x, pinPoint.y,
+                    wirePath[segmentIndex].x, wirePath[segmentIndex].y,
+                    wirePath[segmentIndex + 1].x, wirePath[segmentIndex + 1].y) < 0.75f) return true;
+            }
+        }
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            if (componentIndex == ownerIndex) continue;
+            vector<SDL_Point> otherPins = gCompPinPos(placedComponents[componentIndex]);
+            for (const SDL_Point& otherPin : otherPins) {
+                if (otherPin.x == pinPoint.x && otherPin.y == pinPoint.y) return true;
+            }
+        }
+        return false;
+    }
+
+    bool scanOpenInputs(vector<string>& issueList) const {
+        for (size_t componentIndex = 0; componentIndex < placedComponents.size(); ++componentIndex) {
+            const placedComp& item = placedComponents[componentIndex];
+            vector<LocalPin> pinLayout = ComponentLibrary::getComponentInfo(item.name).getPinLayout(item.inputCountValue);
+            vector<SDL_Point> pinPositions = gCompPinPos(item);
+            size_t pinCount = min(pinLayout.size(), pinPositions.size());
+            for (size_t pinIndex = 0; pinIndex < pinCount; ++pinIndex) {
+                if (pinLayout[pinIndex].kind != PinKind::INPUT) continue;
+                if (inputPinConnected(pinPositions[pinIndex], componentIndex)) continue;
+                string shownName = item.label.empty() ? item.name : item.label;
+                issueList.push_back("DRC ERROR: Floating input on " + shownName + " (pin " + to_string(pinIndex + 1) + ").");
+            }
+        }
+        return issueList.empty();
+    }
+
+    bool referenceGroundPresent(vector<string>& issueList) const {
+        for (const placedComp& item : placedComponents) {
+            if (item.name == "Ground") return true;
+        }
+        issueList.push_back("DRC ERROR: Simulation cannot calculate outputs because GND is missing.");
+        return false;
+    }
+
+    bool runDesignAudit(vector<string>& issueList) const {
+        scanVoltageConflicts(issueList);
+        scanOpenInputs(issueList);
+        referenceGroundPresent(issueList);
+        return issueList.empty();
+    }
+
     string simulationStateText() const {
         if (simulationStatus == SimulationState::RUNNING) return "RUN";
         if (simulationStatus == SimulationState::PAUSED) return "PAUSE";
@@ -2630,8 +3093,19 @@ private:
 
     void startSim() {
         if (simulationStatus == SimulationState::STOPPED) {
+            simulationLogLines.clear();
+            vector<string> detectedIssues;
+            runDesignAudit(detectedIssues);
+            if (!detectedIssues.empty()) {
+                for (const string& issueText : detectedIssues) pushRuleMessage(issueText);
+                pushRuleMessage("Simulation blocked by DRC.");
+                simulationTime = 0;
+                return;
+            }
+            pushRuleMessage("DRC: no errors found. Simulation is ready.");
             simulationTime = 0;
             resetSimulationValues();
+            resetWaveHistory();
         }
         simulationStatus = SimulationState::RUNNING;
         lastRealTimeTick = SDL_GetTicks();
@@ -2655,6 +3129,10 @@ private:
         simulationTime = 0;
         lastRealTimeTick = SDL_GetTicks();
         resetSimulationValues();
+        resetWaveHistory();
+        wavePanelOpen = false;
+        wavePickChannel = -1;
+        waveWireChoice = {-1, -1};
         simulationLogLines.push_back("Simulation stopped.");
         if (simulationLogLines.size() > 20) simulationLogLines.erase(simulationLogLines.begin());
     }
@@ -2671,6 +3149,16 @@ private:
 
     void advanceOneStep() {
         if (simulationStatus == SimulationState::STOPPED) {
+            simulationLogLines.clear();
+            vector<string> detectedIssues;
+            runDesignAudit(detectedIssues);
+            if (!detectedIssues.empty()) {
+                for (const string& issueText : detectedIssues) pushRuleMessage(issueText);
+                pushRuleMessage("Step blocked by DRC.");
+                simulationTime = 0;
+                return;
+            }
+            pushRuleMessage("DRC: no errors found. Step mode is ready.");
             simulationTime = 0;
             resetSimulationValues();
         }
@@ -2882,7 +3370,7 @@ private:
             bool changed = false;
             for (size_t ci = 0; ci < placedComponents.size(); ++ci) {
                 const placedComp& comp = placedComponents[ci];
-                if (comp.name != "Resistor" && comp.name != "Inductor") continue;
+                if (comp.name != "Resistor" && comp.name != "Inductor" && comp.name != "Ammeter") continue;
                 const vector<int>& pins = componentPinLinks[ci];
                 if (pins.size() < 2) continue;
                 double a = nodeVoltage(pins[0]);
@@ -3113,11 +3601,27 @@ private:
                 for (size_t i = 0; i < runtimeState.pinVoltageValues.size() && i < 8; ++i)
                     runtimeState.segmentStateList[i] = LogicStandard::logicFromVoltage(runtimeState.pinVoltageValues[i]) == LogicLevel::HIGH;
             }
+            if (comp.name == "Voltmeter" && runtimeState.pinVoltageValues.size() >= 2) {
+                double firstVoltage = runtimeState.pinVoltageValues[0];
+                double secondVoltage = runtimeState.pinVoltageValues[1];
+                if (!std::isnan(firstVoltage) && !std::isnan(secondVoltage)) runtimeState.meterReading = firstVoltage - secondVoltage;
+                else runtimeState.meterReading = std::numeric_limits<double>::quiet_NaN();
+            }
+            if (comp.name == "Ammeter" && runtimeState.pinVoltageValues.size() >= 2) {
+                double firstVoltage = runtimeState.pinVoltageValues[0];
+                double secondVoltage = runtimeState.pinVoltageValues[1];
+                double shuntValue = namedNumber(comp.value, "shunt", 0.01);
+                if (shuntValue <= 0.0) shuntValue = 0.01;
+                if (!std::isnan(firstVoltage) && !std::isnan(secondVoltage)) runtimeState.meterReading = (firstVoltage - secondVoltage) / shuntValue;
+                else runtimeState.meterReading = std::numeric_limits<double>::quiet_NaN();
+            }
         }
 
         wireVoltageValues.assign(wires.size(), std::numeric_limits<double>::quiet_NaN());
         for (size_t wi = 0; wi < wires.size(); ++wi)
             if (wireNodeList[wi] >= 0) wireVoltageValues[wi] = nodeVoltage(wireNodeList[wi]);
+
+        captureWaveData();
 
         for (const string& warningLine : warningSet) {
             if (lastWarningSet.find(warningLine) == lastWarningSet.end()) {
@@ -3258,6 +3762,23 @@ private:
                     drawTxt(string(1, labels[rowIndexValue][column]), c.x - 4, c.y - 7, {0,0,0,255}, libFont);
                 }
             }
+        }
+        else if (comp.name == "Voltmeter" || comp.name == "Ammeter") {
+            drawLocalBox(34, 18, {35,75,120,255});
+            SDL_Point centerPoint = toScreen(0, 0);
+            const ComponentRuntime* meterState = runtimeFor(comp.id);
+            string meterTitle = comp.name == "Voltmeter" ? "V" : "A";
+            drawTxt(meterTitle, centerPoint.x - 5, centerPoint.y - 16, {35,75,120,255}, libFont);
+            string meterText = "----";
+            if (meterState && !std::isnan(meterState->meterReading)) {
+                stringstream stream;
+                if (comp.name == "Voltmeter") stream << fixed << setprecision(2) << meterState->meterReading << " V";
+                else stream << fixed << setprecision(3) << meterState->meterReading << " A";
+                meterText = stream.str();
+            } else if (simulationStatus != SimulationState::STOPPED) {
+                meterText = "Float";
+            }
+            drawTxt(meterText, centerPoint.x - 28, centerPoint.y + 2, {20,20,20,255}, libFont);
         }
         else if (comp.name == "Resistor") {
             SDL_SetRenderDrawColor(renderer, 0,0,0,255);
@@ -3910,8 +4431,8 @@ private:
         searchFilter = "" ;
         showLib = false;
         showProp= false;
-        undoStack.clear();
-        redoStack.clear();
+        historyBack.clear();
+        historyForward.clear();
         selectedIndices.clear ();
         editingIndex = -1;
         lastClickedIndex = -1;
@@ -3920,7 +4441,7 @@ private:
             searchBox->setTxt( "Search...");
     }
 
-    string fileDialog() {
+    string chooseProjectToOpen() {
         char filename [MAX_PATH ] = "";
 
         OPENFILENAMEA ofn;
@@ -3937,6 +4458,20 @@ private:
             return string( filename );
         }
         return "";
+    }
+
+    string chooseProjectSavePath() {
+        char filename[MAX_PATH] = "";
+        OPENFILENAMEA chooser;
+        ZeroMemory(&chooser, sizeof(chooser));
+        chooser.lStructSize = sizeof(chooser);
+        chooser.hwndOwner = NULL;
+        chooser.lpstrFilter = "Proteus Project Files\0*.proj\0All Files\0*.*\0";
+        chooser.lpstrFile = filename;
+        chooser.nMaxFile = MAX_PATH;
+        chooser.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+        chooser.lpstrDefExt = "proj";
+        return GetSaveFileNameA(&chooser) ? string(filename) : string();
     }
 
     string selectHexFile() {
@@ -4094,7 +4629,7 @@ private:
         currentState = app::PROJECT_NAME_DIALOG;
     }
 
-    void saveProjectToFile(const string& path){
+    void writeProjectData(const string& path){
         ofstream file(path);
         if (!file.is_open() )
             return;
@@ -4117,11 +4652,113 @@ private:
         for (const auto& j : junctions) {
             file << j.x << " " << j.y << "\n";
         }
-
+        int simCode = 0;
+        if (simulationStatus == SimulationState::RUNNING) simCode = 1;
+        else if (simulationStatus == SimulationState::PAUSED) simCode = 2;
+        file << "SIM_STATUS " << simCode << " " << simulationTime << "\n";
         file.close();
     }
 
-    bool loadProjectFromFile(const string& path) {
+    bool saveCurrentProject() {
+        if (projectFilePath.empty()) {
+            string targetPath = chooseProjectSavePath();
+            if (targetPath.empty()) return false;
+            projectFilePath = targetPath;
+        }
+        writeProjectData(projectFilePath);
+        addToRecent(project(projNameFromPath(projectFilePath), projectFilePath, gDate(), canvasWidth, canvasHeight, activeComps));
+        cout << "Project saved: " << projectFilePath << endl;
+        return true;
+    }
+
+    bool saveProjectCopy() {
+        string targetPath = chooseProjectSavePath();
+        if (targetPath.empty()) return false;
+        projectFilePath = targetPath;
+        writeProjectData(projectFilePath);
+        addToRecent(project(projNameFromPath(projectFilePath), projectFilePath, gDate(), canvasWidth, canvasHeight, activeComps));
+        cout << "Project saved as: " << projectFilePath << endl;
+        return true;
+    }
+
+    string pickSnapshotPath() {
+        char filename[MAX_PATH] = "circuit.png";
+        OPENFILENAMEA chooser;
+        ZeroMemory(&chooser, sizeof(chooser));
+        chooser.lStructSize = sizeof(chooser);
+        chooser.hwndOwner = NULL;
+        chooser.lpstrFilter = "PNG Image\0*.png\0All Files\0*.*\0";
+        chooser.lpstrFile = filename;
+        chooser.nMaxFile = MAX_PATH;
+        chooser.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT;
+        chooser.lpstrDefExt = "png";
+        return GetSaveFileNameA(&chooser) ? string(filename) : string();
+    }
+
+    int locatePngCodec(CLSID* codecId) const {
+        UINT codecCount = 0;
+        UINT bufferSize = 0;
+        Gdiplus::GetImageEncodersSize(&codecCount, &bufferSize);
+        if (bufferSize == 0) return -1;
+        vector<BYTE> codecBuffer(bufferSize);
+        Gdiplus::ImageCodecInfo* codecList = reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecBuffer.data());
+        if (Gdiplus::GetImageEncoders(codecCount, bufferSize, codecList) != Gdiplus::Ok) return -1;
+        for (UINT codecIndex = 0; codecIndex < codecCount; ++codecIndex) {
+            if (codecList[codecIndex].MimeType && wcscmp(codecList[codecIndex].MimeType, L"image/png") == 0) {
+                *codecId = codecList[codecIndex].Clsid;
+                return static_cast<int>(codecIndex);
+            }
+        }
+        return -1;
+    }
+
+    wstring widenSnapshotPath(const string& path) const {
+        int required = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, nullptr, 0);
+        if (required <= 0) return L"";
+        vector<wchar_t> converted(static_cast<size_t>(required));
+        MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, converted.data(), required);
+        return wstring(converted.data());
+    }
+
+    bool saveCanvasSnapshot(const string& path) {
+        if (!renderer || vpW <= 0 || vpH <= 0) return false;
+        SDL_Rect area = {vpX, vpY, vpW, vpH};
+        vector<Uint32> pixelBuffer(static_cast<size_t>(vpW) * static_cast<size_t>(vpH));
+        if (SDL_RenderReadPixels(renderer, &area, SDL_PIXELFORMAT_ARGB8888,
+                                 pixelBuffer.data(), vpW * static_cast<int>(sizeof(Uint32))) != 0) {
+            cerr << "Export failed: " << SDL_GetError() << endl;
+            return false;
+        }
+        Gdiplus::GdiplusStartupInput startupInfo;
+        ULONG_PTR gdiplusToken = 0;
+        if (Gdiplus::GdiplusStartup(&gdiplusToken, &startupInfo, nullptr) != Gdiplus::Ok) {
+            cerr << "Export failed: GDI+ could not start." << endl;
+            return false;
+        }
+        Gdiplus::Bitmap snapshot(vpW, vpH, vpW * static_cast<int>(sizeof(Uint32)),
+                                 PixelFormat32bppARGB, reinterpret_cast<BYTE*>(pixelBuffer.data()));
+        CLSID pngCodec;
+        bool saved = false;
+        if (locatePngCodec(&pngCodec) >= 0) {
+            wstring widePath = widenSnapshotPath(path);
+            if (!widePath.empty() && snapshot.Save(widePath.c_str(), &pngCodec, nullptr) == Gdiplus::Ok) saved = true;
+        }
+        Gdiplus::GdiplusShutdown(gdiplusToken);
+        if (saved) {
+            cout << "Circuit image exported: " << path << endl;
+            ShellExecuteA(nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        } else {
+            cerr << "Could not save PNG image." << endl;
+        }
+        return saved;
+    }
+
+    void queueCanvasSnapshot() {
+        string chosenPath = pickSnapshotPath();
+        if (!chosenPath.empty()) queuedSnapshotPath = chosenPath;
+    }
+
+    bool readProjectData(const string& path) {
         ifstream file (path);
         if (!file.is_open())
             return false;
@@ -4195,7 +4832,21 @@ private:
                 junctions.push_back(pt);
             }
         }
+        simulationStatus = SimulationState::STOPPED;
+        simulationTime = 0;
+        string stateTag;
+        if (file >> stateTag) {
+            if (stateTag == "SIM_STATUS") {
+                int simCode = 0;
+                Uint32 savedTime = 0;
+                file >> simCode >> savedTime;
+                simulationTime = savedTime;
+                if (simCode == 1) simulationStatus = SimulationState::RUNNING;
+                else if (simCode == 2) simulationStatus = SimulationState::PAUSED;
+            }
+        }
         file.close();
+        lastRealTimeTick = SDL_GetTicks();
         selectedIndices .clear();
         editingIndex = -1;
         lastClickedIndex = -1;
@@ -4230,6 +4881,8 @@ public:
         btnStop = nullptr;
         btnSingleStep = nullptr;
         btnVoltageProbe = nullptr;
+        btnWavePanel = nullptr;
+        btnSnapshot = nullptr;
         btnRemRecents = nullptr ;
         penProjectName = "Untitled";
         grdSz = 20;
@@ -4237,7 +4890,7 @@ public:
         panX = 0;
         panY = 0;
         isPan = false;
-        statH = 30 ;
+        statH = 105 ;
         winW = 850;winH = 600;
         mseX = 0 ; mseY = 0;
         zoomRct = {0,0,0,0} ;
@@ -4252,7 +4905,8 @@ public:
         showLib = false;
         showProp = false;
         activeCompsY = 0;
-        currentProjectPath = "";
+        projectFilePath = "";
+        queuedSnapshotPath = "";
         draggingComponents =false;
         drawingSelection = false;
         selectionRect = {0,0,0,0};
@@ -4274,6 +4928,19 @@ public:
         simulationStatus = SimulationState::STOPPED;
         simulationTime = 0;
         lastRealTimeTick = 0;
+        wavePanelOpen = false;
+        wavePickChannel = -1;
+        waveWireChoice = {-1, -1};
+        waveTimeDiv = 50.0;
+        waveVoltDiv = {1.0, 1.0};
+        waveLastMark = {std::numeric_limits<Uint32>::max(), std::numeric_limits<Uint32>::max()};
+        wavePanelBox = {0,0,0,0};
+        waveCh1Box = {0,0,0,0};
+        waveCh2Box = {0,0,0,0};
+        waveTimeBox = {0,0,0,0};
+        waveV1Box = {0,0,0,0};
+        waveV2Box = {0,0,0,0};
+        waveCloseBox = {0,0,0,0};
         libItms = {"Resistor","Capacitor","LED","Transistor","Ground","VCC"};
         for (size_t i=0; i<libItms.size(); i++) {
             libRcts.push_back({5, tlbrH + 55 + (int)i*40, pnlLW-10, 28});
@@ -4288,6 +4955,7 @@ public:
         libCategories.push_back(tree("Interactive", {"Switch","Push Button","Potentiometer"}));
         libCategories.push_back(tree("Digital Logic", {"AND Gate","OR Gate","NOT Gate","NAND Gate","XOR Gate","D Flip-Flop"}));
         libCategories.push_back(tree("Display", {"LED","7-Segment"}));
+        libCategories.push_back(tree("Measurement", {"Voltmeter","Ammeter"}));
         vector<string> advancedComponentNames;
         advancedComponentNames.push_back("ADC");
         advancedComponentNames.push_back("DAC");
@@ -4320,6 +4988,8 @@ public:
         delete btnStop;
         delete btnSingleStep;
         delete btnVoltageProbe;
+        delete btnWavePanel;
+        delete btnSnapshot;
         delete searchBox;
         delete propLabelInput ;
         delete propValueInput;
@@ -4393,6 +5063,8 @@ public:
         btnStop = new BUTTONS(renderer, font, 270, 42, 60, 24, {245,170,170,255}, {230,135,135,255}, "Stop");
         btnSingleStep = new BUTTONS(renderer, font, 340, 42, 60, 24, {190,210,245,255}, {160,190,235,255}, "Step");
         btnVoltageProbe = new BUTTONS(renderer, font, 410, 42, 80, 24, {225,235,250,255}, {195,215,245,255}, "Probe");
+        btnWavePanel = new BUTTONS(renderer, font, 500, 42, 80, 24, {220,225,240,255}, {195,205,235,255}, "Scope");
+        btnSnapshot = new BUTTONS(renderer, font, 590, 42, 80, 24, {225,240,225,255}, {195,225,195,255}, "Export");
         int xpos= 120;
         tlbrBtns.push_back (new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Select")); xpos += 80;
         tlbrBtns.push_back(new BUTTONS(renderer, font, xpos, 8, 70,24, {255,255,255,255},{230,230,230,255}, "Wire")); xpos+= 80;
@@ -4462,10 +5134,10 @@ public:
                     currentState = app::NEW_PROJECT_DIALOG;
                 }
                 else if (btnOpenP->click(ev)){
-                    string chosen = fileDialog();
+                    string chosen = chooseProjectToOpen();
                     if (!chosen.empty()) {
-                        if (loadProjectFromFile (chosen)) {
-                            currentProjectPath = chosen;
+                        if (readProjectData (chosen)) {
+                            projectFilePath = chosen;
                             fitWindowToCanvas() ;
                             SDL_SetWindowMinimumSize (window, 400, 300);
                             SDL_SetWindowMaximumSize (window, 0, 0);
@@ -4490,8 +5162,8 @@ public:
                         if (btnRecents [i]->click(ev)) {
                             cout << "Loading project: " << recentPs[i].name << endl;
                             string path= recentPs[i].path;
-                            if (loadProjectFromFile(path)) {
-                                currentProjectPath = path;
+                            if (readProjectData(path)) {
+                                projectFilePath = path;
                             } else {
                                 canvasWidth = recentPs[i].canvasW; canvasHeight = recentPs[i].canvasH;
                                 activeComps = recentPs[i].activeComponents;
@@ -4499,7 +5171,7 @@ public:
                                 runtimeData.clear();
                                 clearDeviceStates();
                                 nextComponentNumber = 1;
-                                currentProjectPath = path;
+                                projectFilePath = path;
                             }
                             fitWindowToCanvas();
                             SDL_SetWindowMinimumSize(window, 400, 300);
@@ -4632,16 +5304,16 @@ public:
                     nextComponentNumber = 1;
                     wires.clear();
                     junctions.clear();
-                    undoStack.clear() ;
-                    redoStack.clear();
+                    historyBack.clear() ;
+                    historyForward.clear();
                     selectedIndices.clear();
                     editingIndex =-1;
                     lastClickedIndex = -1;
                     lastClickTime = 0;
                     updateWorldBounds ();
                     addToRecent(project(finalName, path, gDate( ), canvasWidth, canvasHeight, activeComps));
-                    saveProjectToFile (path);
-                    currentProjectPath = path;
+                    writeProjectData (path);
+                    projectFilePath = path;
                     if (txtProjectName)
                         txtProjectName->setActive(false);
                     fitWindowToCanvas ();
@@ -4680,6 +5352,10 @@ public:
                 if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F8) {
                     if (simulationStatus != SimulationState::STOPPED) currentTool = Tool::PROBE;
                 }
+                if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_F9) {
+                    wavePanelOpen = !wavePanelOpen;
+                    if (!wavePanelOpen) wavePickChannel = -1;
+                }
                 mouseHandled = false;
 
                 btnBack->events(ev);
@@ -4701,6 +5377,8 @@ public:
                 btnStop->events(ev);
                 btnSingleStep->events(ev);
                 btnVoltageProbe->events(ev);
+                btnWavePanel->events(ev);
+                btnSnapshot->events(ev);
 
                 if (!mouseHandled && btnRun->click(ev)) {
                     startSim();
@@ -4720,6 +5398,15 @@ public:
                 }
                 else if (!mouseHandled && btnVoltageProbe->click(ev)) {
                     if (simulationStatus != SimulationState::STOPPED) currentTool = Tool::PROBE;
+                    mouseHandled = true;
+                }
+                else if (!mouseHandled && btnWavePanel->click(ev)) {
+                    wavePanelOpen = !wavePanelOpen;
+                    if (!wavePanelOpen) wavePickChannel = -1;
+                    mouseHandled = true;
+                }
+                else if (!mouseHandled && btnSnapshot->click(ev)) {
+                    queueCanvasSnapshot();
                     mouseHandled = true;
                 }
                 else if (!mouseHandled && tlbrBtns[0]-> click(ev)) {
@@ -4758,19 +5445,15 @@ public:
                     cout<< "Component Library toggled\n";
                 }
                 else if (!mouseHandled && tlbrBtns [3]->click(ev)){
-                    if (!currentProjectPath.empty()) {
-                        saveProjectToFile (currentProjectPath);
-                        addToRecent(project(projNameFromPath(currentProjectPath ), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
-                        cout << "Project saved.\n";
-                    }
+                    saveCurrentProject();
                     selLibItm = "";
                     mouseHandled = true;
                 }
                 else if(!mouseHandled && tlbrBtns[4]->click(ev)) {
-                    string chosen = fileDialog();
+                    string chosen = chooseProjectToOpen();
                     if (!chosen.empty ()) {
-                        if (loadProjectFromFile(chosen)) {
-                            currentProjectPath = chosen;
+                        if (readProjectData(chosen)) {
+                            projectFilePath = chosen;
                             fitWindowToCanvas();
                             resetLibExpanded();
                             resetView();
@@ -4786,12 +5469,12 @@ public:
                     mouseHandled =true;
                 }
                 else if (!mouseHandled && tlbrBtns[5]->click (ev)) {
-                    undo();
+                    stepHistoryBack();
                     mouseHandled = true;
                     cout << "Undo\n";
                 }
                 else if (!mouseHandled && tlbrBtns[6]->click(ev)) {
-                    redo();
+                    stepHistoryForward();
                     mouseHandled = true;
                     cout << "Redo \n";
                 }
@@ -4823,7 +5506,18 @@ public:
                 if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button== SDL_BUTTON_LEFT && !mouseHandled) {
                     bool canvasClickHandled = false;
                     bool ctrlHeld = SDL_GetModState() &KMOD_CTRL;
-                    if (showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
+
+                    if (wavePanelOpen && handleWavePanelClick(ev.button.x, ev.button.y)) {
+                        canvasClickHandled = true;
+                        mouseHandled = true;
+                    }
+                    if (!canvasClickHandled && wavePickChannel >= 0 && ev.button.x >= vpX && ev.button.x < vpX + vpW && ev.button.y >= vpY && ev.button.y < vpY + vpH) {
+                        connectWaveChannel(ev.button.x, ev.button.y);
+                        canvasClickHandled = true;
+                        mouseHandled = true;
+                    }
+
+                    if (!canvasClickHandled && showLib && searchBox && searchBox->mouseIn(ev.button.x, ev.button.y)) {
                         searchBox->setActive(true);
                         if (searchBox->gTxt()== "Search...")
                             searchBox->setTxt("");
@@ -4846,11 +5540,11 @@ public:
                             SDL_Rect r = {5, activeCompsY + index * 26, pnlLW - 10, 20};
                             SDL_Rect xRect = {r.x + r.w - 15, r.y + (r.h - 10)/2, 10, 10};
                             if (mseX >= xRect.x && mseX <= xRect.x + xRect.w && mseY >= xRect. y && mseY <= xRect.y + xRect.h) {
-                                UndoAction act;
-                                act.type = ACTIVE_REMOVE;
+                                HistoryEntry act;
+                                act.type = LIB_REMOVE;
                                 act.compName = activeComps[index];
                                 act.activeIndex = index ;
-                                pushUndo(act);
+                                rememberChange(act);
                                 activeComps.erase(activeComps.begin() + index);
                                 canvasClickHandled = true;
                             }
@@ -4878,10 +5572,10 @@ public:
                                             currentTool = Tool::COMPONENT;
                                             if (ev.button.clicks == 2) {
                                                 if (find(activeComps.begin(), activeComps.end(),comp)== activeComps.end()) {
-                                                    UndoAction act;
-                                                    act.type = ACTIVE_ADD;
+                                                    HistoryEntry act;
+                                                    act.type = LIB_ADD;
                                                     act.compName = comp;
-                                                    pushUndo (act);
+                                                    rememberChange (act);
                                                     activeComps.push_back (comp);
                                                 }
                                             }
@@ -4961,14 +5655,14 @@ public:
                                     wireStartActive = true;
                                 } else {
                                     vector<SDL_Point> path = calcOrthoPath(wireStartPoint, clickPoint);
-                                    UndoAction act;
-                                    act.type = WIRE_ADD;
+                                    HistoryEntry act;
+                                    act.type = ADD_WIRE;
                                     act.wiresBefore = wires;
                                     act.junctionsBefore= junctions;
                                     wires.push_back(path);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter= junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     wireStartActive = false;
                                 }
                                 canvasClickHandled = true;
@@ -4979,15 +5673,15 @@ public:
                                 clampToCanvas (wx, wy);
                                 placedComp pc ={selLibItm, wx, wy, 0, false, false, "", ""} ;
                                 initComponent(pc);
-                                UndoAction act;
-                                act.type = COMP_PLACE;
+                                HistoryEntry act;
+                                act.type = PLACE_ITEM;
                                 act.comp = pc ;
                                 act.wiresBefore = wires;
                                 act.junctionsBefore = junctions;
                                 placedComponents.push_back (pc);
                                 act.wiresAfter = wires;
                                 act.junctionsAfter = junctions;
-                                pushUndo(act);
+                                rememberChange(act);
                             } else {
                                 bool hitComponent =false;
                                 for (size_t i = 0; i < placedComponents.size(); ++i) {
@@ -5113,23 +5807,23 @@ public:
                                                                     if (pointNear(jpt, inter, 6)) { exists = true ; break; }
                                                                 }
                                                                 if(!exists) {
-                                                                    UndoAction act;
-                                                                    act.type = WIRE_JUNCTION_ADD;
+                                                                    HistoryEntry act;
+                                                                    act.type = ADD_JUNCTION;
                                                                     act.junctionsBefore= junctions;
                                                                     junctions.push_back(inter);
                                                                     act.junctionsAfter = junctions;
-                                                                    pushUndo(act);
+                                                                    rememberChange(act);
                                                                 }
                                                                 else {
                                                                     for (auto it = junctions.begin(); it != junctions.end(); ++it) {
                                                                         if (pointNear(*it, inter, 6)){
-                                                                            UndoAction act;
-                                                                            act.type = WIRE_JUNCTION_REMOVE;
+                                                                            HistoryEntry act;
+                                                                            act.type = REMOVE_JUNCTION;
                                                                             act. junctionsBefore = junctions;
                                                                             act.junctionPoint = *it;
                                                                             junctions.erase(it);
                                                                             act.junctionsAfter = junctions;
-                                                                            pushUndo(act);
+                                                                            rememberChange(act);
                                                                             break ;
                                                                         }
                                                                     }
@@ -5181,14 +5875,14 @@ public:
                         }
                         if (!canvasClickHandled && btnPropOK && btnPropOK->click(ev)){
                             if (editingIndex <placedComponents.size()) {
-                                UndoAction act;
-                                act.type =COMP_EDIT;
+                                HistoryEntry act;
+                                act.type =EDIT_ITEM;
                                 act.oldComp = placedComponents [editingIndex];
                                 placedComponents[editingIndex].label = propLabelInput->gTxt();
                                 placedComponents[editingIndex].value = propValueInput->gTxt();
                                 applyComponentSettings(placedComponents[editingIndex]);
                                 act.comp = placedComponents[editingIndex];
-                                pushUndo (act);
+                                rememberChange (act);
                             }
                             editingIndex = -1;
                             showProp = false;
@@ -5225,8 +5919,8 @@ public:
                                 int x2 = wldToScrX(wires[wi][si+1].x);
                                 int y2 = wldToScrY(wires[wi][si+1].y);
                                 if (pointToSegmentDist(mseX, mseY, x1, y1, x2, y2) < 6) {
-                                    UndoAction act;
-                                    act.type = WIRE_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_WIRE;
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions ;
                                     vector<SDL_Point> removedWireData = wires[wi];
@@ -5234,7 +5928,7 @@ public:
                                     removeJunctionsOnWire (removedWireData);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     removedWire = true;
                                     break;
                                 }
@@ -5244,12 +5938,12 @@ public:
                         if (!removedWire) {
                             for (size_t i = 0; i < placedComponents.size(); ++i) {
                                 if (isPointInsideComponent(placedComponents[i], scrToWldX(mseX), scrToWldY(mseY))){
-                                    UndoAction act;
-                                    act.type = COMP_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_ITEM;
                                     act.comp = placedComponents[i];
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     placedComponents.erase (placedComponents.begin() + i);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter =junctions;
@@ -5268,13 +5962,13 @@ public:
                     if (draggingComponents){
                         if (dragStartX != mseX ||dragStartY != mseY){
                             updateWiresForMovingComp () ;
-                            UndoAction act;
-                            act.type = COMP_MOVE;
+                            HistoryEntry act;
+                            act.type = MOVE_ITEM;
                             act.compsBefore= preDragComponents;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = preDragWires;
                             act.wiresAfter = wires;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         draggingComponents = false;
                     }
@@ -5409,21 +6103,24 @@ public:
                 if (ev.type == SDL_KEYDOWN) {
                     bool textFieldActive = (propLabelInput && propLabelInput->isActive())|| (propValueInput && propValueInput->isActive()) ||(searchBox && searchBox->isActive());
 
-                    if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { undo();}
-                    else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { redo(); }
+                    if (ev.key.keysym.sym == SDLK_z && (SDL_GetModState() & KMOD_CTRL)) { stepHistoryBack();}
+                    else if (ev.key.keysym.sym == SDLK_y && (SDL_GetModState() & KMOD_CTRL)) { stepHistoryForward(); }
+                    else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL) && (SDL_GetModState() & KMOD_SHIFT)) {
+                        saveProjectCopy();
+                        selLibItm = "";
+                    }
                     else if (ev.key.keysym.sym == SDLK_s && (SDL_GetModState() & KMOD_CTRL)) {
-                        if (!currentProjectPath.empty()) {
-                            saveProjectToFile(currentProjectPath) ;
-                            addToRecent(project(projNameFromPath(currentProjectPath), currentProjectPath, gDate(), canvasWidth, canvasHeight, activeComps));
-                            cout << "Project saved (Ctrl+S).\n";
-                        }
+                        saveCurrentProject();
                         selLibItm = "" ;
                     }
+                    else if (ev.key.keysym.sym == SDLK_e && (SDL_GetModState() & KMOD_CTRL)) {
+                        queueCanvasSnapshot();
+                    }
                     else if (ev.key.keysym.sym == SDLK_o && (SDL_GetModState() & KMOD_CTRL)) {
-                        string chosen = fileDialog();
+                        string chosen = chooseProjectToOpen();
                         if (!chosen.empty()) {
-                            if (loadProjectFromFile(chosen)) {
-                                currentProjectPath = chosen;
+                            if (readProjectData(chosen)) {
+                                projectFilePath = chosen;
                                 fitWindowToCanvas() ;
                                 resetLibExpanded ();
                                 resetView();
@@ -5466,12 +6163,12 @@ public:
                             for (auto it = selectedIndices.rbegin(); it != selectedIndices.rend() ; ++it) {
                                 size_t i = *it;
                                 if (i < placedComponents.size()) {
-                                    UndoAction act;
-                                    act.type = COMP_DELETE;
+                                    HistoryEntry act;
+                                    act.type = DELETE_ITEM;
                                     act.comp = placedComponents [i];
                                     act.wiresBefore = wires;
                                     act.junctionsBefore = junctions;
-                                    pushUndo(act);
+                                    rememberChange(act);
                                     placedComponents.erase(placedComponents.begin() + i);
                                     act.wiresAfter = wires;
                                     act.junctionsAfter = junctions ;
@@ -5488,15 +6185,15 @@ public:
                                 placedComponents[idx].angle = (placedComponents[idx].angle + 90) %360;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type = COMP_TRANSFORM ;
+                            HistoryEntry act;
+                            act.type = TRANSFORM_ITEM ;
                             act.compsBefore = before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeRotate;
                             act.wiresAfter = wires;
                             act.junctionsBefore= junctionsBeforeRotate;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if (ev.key.keysym.sym== SDLK_h){
                             vector <placedComp> before = placedComponents;
@@ -5506,15 +6203,15 @@ public:
                                 placedComponents[idx].flipH = !placedComponents[idx].flipH;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type =COMP_TRANSFORM;
+                            HistoryEntry act;
+                            act.type =TRANSFORM_ITEM;
                             act.compsBefore = before;
                             act.compsAfter =placedComponents;
                             act.wiresBefore = wiresBeforeFlip;
                             act.wiresAfter = wires;
                             act.junctionsBefore= junctionsBeforeFlip;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if(ev.key.keysym.sym == SDLK_v) {
                             vector<placedComp> before = placedComponents;
@@ -5524,15 +6221,15 @@ public:
                                 placedComponents [idx].flipV = !placedComponents [idx].flipV;
                             }
                             updateWiresForTransform(before, placedComponents);
-                            UndoAction act;
-                            act.type = COMP_TRANSFORM;
+                            HistoryEntry act;
+                            act.type = TRANSFORM_ITEM;
                             act.compsBefore= before;
                             act.compsAfter = placedComponents;
                             act.wiresBefore = wiresBeforeFlipV;
                             act.wiresAfter = wires;
                             act.junctionsBefore = junctionsBeforeFlipV;
                             act.junctionsAfter = junctions;
-                            pushUndo(act);
+                            rememberChange(act);
                         }
                         else if (ev.key.keysym.sym == SDLK_PLUS || ev.key.keysym.sym == SDLK_KP_PLUS){
                             float oldZm = zmLvl; zmLvl *= 1.1f; if (zmLvl > 5.0f) zmLvl =5.0f ;
@@ -5677,9 +6374,11 @@ public:
             btnStop->draw(renderer);
             btnSingleStep->draw(renderer);
             btnVoltageProbe->draw(renderer);
+            btnWavePanel->draw(renderer);
+            btnSnapshot->draw(renderer);
             string simText = "Simulation: " + simulationStateText() +
                              "   Time: " + to_string(simulationTime) + " ms";
-            drawTxt(simText, 415, 45, {20,20,20,255}, libFont);
+            drawTxt(simText, 680, 45, {20,20,20,255}, libFont);
             if (showLib) {
                 SDL_Rect libBg = { 0, tlbrH, pnlLW, vpH};
                 SDL_SetRenderDrawColor(renderer, 235,235,245,255);
@@ -5922,8 +6621,15 @@ public:
             SDL_RenderSetClipRect( renderer, nullptr);
 
             drawProbeValue();
+            drawWavePanel();
             drawTxt("Workspace - Canvas: " +to_string(canvasWidth) + "x" + to_string(canvasHeight), vpX+10, vpY+10, {0, 0, 0, 255});
             drawStatusBar() ;
+        }
+
+        if (!queuedSnapshotPath.empty() && currentState == app::WORKSPACE) {
+            string pathToWrite = queuedSnapshotPath;
+            queuedSnapshotPath.clear();
+            saveCanvasSnapshot(pathToWrite);
         }
 
         SDL_RenderPresent(renderer);
